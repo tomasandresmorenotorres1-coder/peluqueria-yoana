@@ -11,13 +11,16 @@ export const pool = new Pool({
     database: process.env.DB_NAME || 'peluqueria_yoana',
 });
 
-export const verificarConexionDB = async (): Promise<void> => {
+export const verificarConexionDB = async (): Promise<boolean> => {
     try {
         const client = await pool.connect();
-        console.log('Conectado exitosamente a PostgreSQL (peluqueria_yoana)');
+        console.log(' Conectado exitosamente a PostgreSQL (peluqueria_yoana)');
         client.release();
-    } catch (error) {
-        console.error('Error al conectar con PostgreSQL:', error);
-        process.exit(1);
+        return true;
+    } catch (error: any) {
+        console.error('⚠️ Advertencia al conectar con PostgreSQL:', error.message);
+        console.error('Asegúrate de que PostgreSQL esté corriendo en el puerto 5432 y que las credenciales en backend/.env sean correctas.');
+        console.error('Puedes inicializar o migrar la base de datos con: npm run db:setup');
+        return false;
     }
 };
