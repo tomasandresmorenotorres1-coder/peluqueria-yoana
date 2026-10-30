@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { pool } from '../config/db';
+import { obtenerOCrearCliente } from '../utils/clientes';
 
 const router = Router();
 
@@ -52,7 +53,14 @@ router.post('/', async (req: Request, res: Response) => {
             return res.status(400).json({ ok: false, error: 'Faltan campos obligatorios para reservar el turno' });
         }
 
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !/^\d{2}:\d{2}(:\d{2})?$/.test(hora_inicio)) {
+            return res.status(400).json({ ok: false, error: 'Formato inválido: fecha YYYY-MM-DD y hora_inicio HH:MM' });
+        }
+
         await client.query('BEGIN');
+
+        // Bloqueo por estilista y día: evita que dos personas reserven la misma hora al mismo tiempo
+        await client.query('SELECT pg_advisory_xact_lock($1::int, hashtext($2::text))', [equipo_id, fecha]);
 
         // 1. Obtener precio actual y duración del servicio
         const servicioRes = await client.query(
@@ -83,13 +91,8 @@ router.post('/', async (req: Request, res: Response) => {
             });
         }
 
-        // 3. Registrar el cliente
-        const clienteRes = await client.query(
-            `INSERT INTO clientes (nombre_completo, telefono_whatsapp, email)
-       VALUES ($1, $2, $3) RETURNING id`,
-            [nombre_completo, telefono_whatsapp, email || null]
-        );
-        const cliente_id = clienteRes.rows[0].id;
+        // 3. Registrar el cliente (o reutilizar si ya existe)
+        const cliente_id = await obtenerOCrearCliente(client, nombre_completo, telefono_whatsapp, email);
 
         // 4. Insertar el turno congelando el precio actual
         const turnoRes = await client.query(
@@ -127,10 +130,13 @@ router.post('/', async (req: Request, res: Response) => {
             ok: true,
             mensaje: 'Turno reservado exitosamente',
             data: turnoCreado,
-            whatsapp_url: `https://wa.me/573000000000?text=${mensajeWhatsApp}`,
+            whatsapp_url: `https://wa.me/${process.env.WHATSAPP_NUMBER || ''}?text=${mensajeWhatsApp}`,
         });
-    } catch (error) {
+    } catch (error: any) {
         await client.query('ROLLBACK');
+        if (error.code === '23503') {
+            return res.status(400).json({ ok: false, error: 'El estilista o el servicio indicado no existe' });
+        }
         console.error('Error al crear turno:', error);
         res.status(500).json({ ok: false, error: 'Error interno al procesar la reserva' });
     } finally {
