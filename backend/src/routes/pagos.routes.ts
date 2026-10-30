@@ -1,5 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { pool } from '../config/db';
+import { requireWebhookSecret } from '../middleware/auth';
+import { obtenerOCrearCliente } from '../utils/clientes';
 
 const router = Router();
 
@@ -47,6 +49,10 @@ router.post('/ordenes', async (req: Request, res: Response) => {
                 'SELECT id, nombre, precio_actual, stock FROM productos WHERE id = $1 AND activo = TRUE FOR UPDATE',
                 [productoId]
             );
+
+            if (!Number.isInteger(Number(item.cantidad)) || Number(item.cantidad) <= 0) {
+                throw new Error('La cantidad de cada producto debe ser un número entero mayor a 0');
+            }
 
             if (prodRes.rows.length === 0) {
                 throw new Error(`Producto ID ${productoId} no encontrado o inactivo`);
@@ -111,6 +117,11 @@ router.post('/iniciar', async (req: Request, res: Response) => {
             metodo_pago,
         } = req.body;
 
+        const METODOS = ['TARJETA', 'PSE', 'NEQUI', 'DAVIPLATA', 'EFECTIVO_LOCAL'];
+        if (!METODOS.includes(metodo_pago)) {
+            return res.status(400).json({ ok: false, error: `metodo_pago debe ser uno de: ${METODOS.join(', ')}` });
+        }
+
         if (!turno_id && !orden_id) {
             return res.status(400).json({ ok: false, error: 'Debe asociar el pago a un turno_id o a un orden_id' });
         }
@@ -152,10 +163,15 @@ router.post('/iniciar', async (req: Request, res: Response) => {
 });
 
 // 3. Webhook / Confirmación de estado de la Pasarela de Pagos
-router.post('/confirmar', async (req: Request, res: Response) => {
+router.post('/confirmar', requireWebhookSecret, async (req: Request, res: Response) => {
     const client = await pool.connect();
     try {
         const { referencia_transaccion, estado_pago, respuesta_pasarela = {} } = req.body;
+
+        const ESTADOS = ['PENDIENTE', 'APROBADO', 'RECHAZADO', 'ANULADO', 'ERROR'];
+        if (!referencia_transaccion || !ESTADOS.includes(estado_pago)) {
+            return res.status(400).json({ ok: false, error: `Se requiere referencia_transaccion y estado_pago (${ESTADOS.join(', ')})` });
+        }
 
         await client.query('BEGIN');
 

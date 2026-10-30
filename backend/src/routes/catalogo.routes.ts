@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { pool } from '../config/db';
+import { requireAdmin } from '../middleware/auth';
 
 const router = Router();
 
@@ -81,7 +82,7 @@ router.patch('/servicios/:id/precio', async (req: Request, res: Response) => {
         const { id } = req.params;
         const { nuevo_precio } = req.body;
 
-        if (nuevo_precio === undefined || Number(nuevo_precio) < 0) {
+        if (nuevo_precio === undefined || !Number.isFinite(Number(nuevo_precio)) || Number(nuevo_precio) < 0) {
             return res.status(400).json({ ok: false, error: 'Precio inválido' });
         }
 
@@ -156,10 +157,20 @@ router.get('/productos', async (req: Request, res: Response) => {
 });
 
 // 4. Actualizar precio o stock de un producto
-router.patch('/productos/:id/precio', async (req: Request, res: Response) => {
+router.patch('/productos/:id/precio', requireAdmin, async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const { nuevo_precio, nuevo_stock } = req.body;
+
+        if (nuevo_precio === undefined && nuevo_stock === undefined) {
+            return res.status(400).json({ ok: false, error: 'Envía nuevo_precio y/o nuevo_stock' });
+        }
+        if (nuevo_precio !== undefined && (!Number.isFinite(Number(nuevo_precio)) || Number(nuevo_precio) < 0)) {
+            return res.status(400).json({ ok: false, error: 'Precio inválido' });
+        }
+        if (nuevo_stock !== undefined && (!Number.isInteger(Number(nuevo_stock)) || Number(nuevo_stock) < 0)) {
+            return res.status(400).json({ ok: false, error: 'Stock inválido' });
+        }
 
         const { rows } = await pool.query(
             `UPDATE productos
