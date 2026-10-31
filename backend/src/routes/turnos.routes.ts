@@ -169,7 +169,6 @@ router.post('/', async (req: Request, res: Response) => {
 
         res.status(201).json({
             ok: true,
-<<<<<<< HEAD
             mensaje: 'Turno reservado exitosamente en PostgreSQL',
             data: {
                 ...turnoCreado,
@@ -177,11 +176,6 @@ router.post('/', async (req: Request, res: Response) => {
                 barbero_nombre: barbero_nombre || 'Especialista asignado',
             },
             whatsapp_url: `https://wa.me/541145678901?text=${mensajeWhatsApp}`,
-=======
-            mensaje: 'Turno reservado exitosamente',
-            data: turnoCreado,
-            whatsapp_url: `https://wa.me/${process.env.WHATSAPP_NUMBER || ''}?text=${mensajeWhatsApp}`,
->>>>>>> origin/main
         });
     } catch (error: any) {
         await client.query('ROLLBACK');
