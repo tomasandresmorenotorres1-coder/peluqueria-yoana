@@ -186,10 +186,12 @@ export async function publicarResena(data: {
 }
 
 // 7. Disponibilidad y Reserva de Turnos
-export async function fetchHorasOcupadas(fecha: string, barberoNombre?: string): Promise<string[]> {
+// Si se indica el servicio, el servidor tiene en cuenta cuánto dura (un servicio largo ocupa también las horas siguientes)
+export async function fetchHorasOcupadas(fecha: string, barberoNombre?: string, servicioId?: number): Promise<string[]> {
   try {
     const params = new URLSearchParams({ fecha });
     if (barberoNombre) params.append('barbero_nombre', barberoNombre);
+    if (servicioId) params.append('servicio_id', String(servicioId));
 
     const res = await request<{ ok: boolean; horas_ocupadas: string[] }>(`/turnos/disponibilidad?${params.toString()}`);
     return res.horas_ocupadas || [];

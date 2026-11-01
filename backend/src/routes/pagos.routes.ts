@@ -1,12 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { pool } from '../config/db';
-import { requireWebhookSecret } from '../middleware/auth';
+import { autenticarOpcional, requireWebhookSecret } from '../middleware/auth';
 import { obtenerOCrearCliente } from '../utils/clientes';
 
 const router = Router();
 
 // 1. Crear una orden de compra de productos
-router.post('/ordenes', async (req: Request, res: Response) => {
+router.post('/ordenes', autenticarOpcional, async (req: Request, res: Response) => {
     const client = await pool.connect();
     try {
         const {
@@ -18,18 +18,17 @@ router.post('/ordenes', async (req: Request, res: Response) => {
             items, // Array de { producto_id (o id), cantidad (o qty) }
         } = req.body;
 
-        if (!nombre_completo || !telefono_whatsapp || !Array.isArray(items) || items.length === 0) {
+        // Si compra un cliente con cuenta, se usan los datos de su cuenta; si no, los del formulario (compra sin cuenta)
+        const cuentaCliente = req.usuario?.rol === 'CLIENTE' ? req.usuario : null;
+        if (!Array.isArray(items) || items.length === 0 || (!cuentaCliente && (!nombre_completo || !telefono_whatsapp))) {
             return res.status(400).json({ ok: false, error: 'Datos de cliente o lista de productos incompletos' });
         }
 
         await client.query('BEGIN');
 
-        const clienteRes = await client.query(
-            `INSERT INTO clientes (nombre_completo, telefono_whatsapp, email)
-             VALUES ($1, $2, $3) RETURNING id`,
-            [nombre_completo.trim(), telefono_whatsapp.trim(), email ? email.trim() : null]
-        );
-        const cliente_id = clienteRes.rows[0].id;
+        const cliente_id = cuentaCliente
+            ? cuentaCliente.cliente_id!
+            : await obtenerOCrearCliente(client, nombre_completo.trim(), telefono_whatsapp.trim(), email ? email.trim() : null);
 
         const ordenRes = await client.query(
             `INSERT INTO ordenes (cliente_id, metodo_entrega, direccion_entrega, total_orden)
@@ -43,14 +42,14 @@ router.post('/ordenes', async (req: Request, res: Response) => {
 
         for (const rawItem of items) {
             const productoId = rawItem.producto_id || rawItem.id;
-            const cantidad = Number(rawItem.cantidad || rawItem.qty || 1);
+            const cantidad = Number(rawItem.cantidad ?? rawItem.qty ?? 1);
 
             const prodRes = await client.query(
                 'SELECT id, nombre, precio_actual, stock FROM productos WHERE id = $1 AND activo = TRUE FOR UPDATE',
                 [productoId]
             );
 
-            if (!Number.isInteger(Number(item.cantidad)) || Number(item.cantidad) <= 0) {
+            if (!Number.isInteger(cantidad) || cantidad <= 0) {
                 throw new Error('La cantidad de cada producto debe ser un número entero mayor a 0');
             }
 

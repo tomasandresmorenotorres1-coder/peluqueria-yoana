@@ -59,6 +59,10 @@ export async function setupDatabase() {
 
         const schemaPath = path.resolve(__dirname, '../../database/01_shema.sql');
         const seedPath = path.resolve(__dirname, '../../database/02_shema.sql');
+        const authPath = path.resolve(__dirname, '../../database/03_usuarios.sql');
+
+        // Las tablas de usuarios y horarios dependen de equipo y clientes: se borran primero para recrearlas limpias
+        await appClient.query('DROP TABLE IF EXISTS bloqueos_estilista, horarios_estilista, usuarios CASCADE');
 
         if (fs.existsSync(schemaPath)) {
             const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
@@ -70,6 +74,11 @@ export async function setupDatabase() {
             const seedSql = fs.readFileSync(seedPath, 'utf-8');
             await appClient.query(seedSql);
             console.log('✅ Semillas 02_shema.sql aplicadas exitosamente.');
+        }
+
+        if (fs.existsSync(authPath)) {
+            await appClient.query(fs.readFileSync(authPath, 'utf-8'));
+            console.log('✅ Usuarios y horarios 03_usuarios.sql aplicados exitosamente.');
         }
 
         console.log('🎉 Base de datos configurada e integrada al 100%.');

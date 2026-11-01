@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { pool } from '../config/db';
-import { requireAdmin } from '../middleware/auth';
+import { autenticar, requireRol } from '../middleware/auth';
 
 const router = Router();
 
@@ -77,7 +77,7 @@ router.get('/servicios', async (req: Request, res: Response) => {
 });
 
 // 2. Actualizar precio de un servicio
-router.patch('/servicios/:id/precio', async (req: Request, res: Response) => {
+router.patch('/servicios/:id/precio', autenticar, requireRol('ADMIN'), async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const { nuevo_precio } = req.body;
@@ -157,7 +157,7 @@ router.get('/productos', async (req: Request, res: Response) => {
 });
 
 // 4. Actualizar precio o stock de un producto
-router.patch('/productos/:id/precio', requireAdmin, async (req: Request, res: Response) => {
+router.patch('/productos/:id/precio', autenticar, requireRol('ADMIN'), async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const { nuevo_precio, nuevo_stock } = req.body;

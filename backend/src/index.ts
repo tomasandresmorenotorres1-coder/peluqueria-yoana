@@ -9,6 +9,9 @@ import catalogoRoutes from './routes/catalogo.routes';
 import turnosRoutes from './routes/turnos.routes';
 import pagosRoutes from './routes/pagos.routes';
 import interaccionRoutes from './routes/interaccion.routes';
+import authRoutes from './routes/auth.routes';
+import adminRoutes from './routes/admin.routes';
+import estilistaRoutes from './routes/estilista.routes';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -31,6 +34,9 @@ app.get('/api/health', async (_req: Request, res: Response) => {
     }
 });
 // Registro de módulos de la API
+app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/estilista', estilistaRoutes);
 app.use('/api/catalogo', catalogoRoutes);
 app.use('/api/turnos', turnosRoutes);
 app.use('/api/pagos', pagosRoutes);

@@ -1,6 +1,9 @@
 import { WHATSAPP_NUMBER } from "@/data/constants";
 
 export default function WhatsAppButton() {
+  // Sin número configurado no se muestra el botón (evita mandar a un número equivocado)
+  if (!WHATSAPP_NUMBER) return null;
+
   return (
     <aside
       className="fixed bottom-6 right-6 z-50 group flex items-center gap-3"

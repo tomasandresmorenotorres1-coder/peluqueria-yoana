@@ -1,50 +1,96 @@
+/**
+ * Turnos (citas): consultar disponibilidad, reservar y gestionar mis reservas.
+ * Base: /api/turnos
+ *
+ * Se puede reservar CON cuenta (el turno queda ligado al cliente) o SIN cuenta (con nombre y teléfono).
+ */
 import { Router, Request, Response } from 'express';
 import { pool } from '../config/db';
+import { autenticar, autenticarOpcional, requireRol } from '../middleware/auth';
 import { obtenerOCrearCliente } from '../utils/clientes';
+import {
+    DURACION_POR_DEFECTO_MIN, HORAS_DE_LA_GRILLA, MENSAJES_NO_DISPONIBLE, ahoraEnColombia, aMinutos,
+    esFechaValida, esHoraValida, motivoNoDisponible, obtenerJornada, obtenerOcupaciones,
+} from '../utils/horarios';
 
 const router = Router();
 
-// 1. Consultar turnos ocupados por fecha y estilista
+/** Busca el id del estilista, ya sea por equipo_id o por su nombre. */
+const resolverEquipoId = async (equipo_id: unknown, barbero_nombre: unknown): Promise<number | null> => {
+    if (equipo_id) {
+        const id = Number(equipo_id);
+        return Number.isInteger(id) && id > 0 ? id : null;
+    }
+    if (barbero_nombre) {
+        const { rows } = await pool.query('SELECT id FROM equipo WHERE LOWER(nombre) = LOWER($1) LIMIT 1', [
+            String(barbero_nombre).trim(),
+        ]);
+        if (rows.length > 0) return rows[0].id;
+    }
+    return null;
+};
+
+// ---------------------------------------------------------------------
+// 1. Horarios libres de un estilista en una fecha
+//    GET /api/turnos/disponibilidad?fecha=YYYY-MM-DD&equipo_id=1&servicio_id=3
+//    Si se indica servicio_id (o duracion en minutos), se tiene en cuenta cuánto dura:
+//    un servicio de 2 horas ocupa también la hora siguiente.
+// ---------------------------------------------------------------------
 router.get('/disponibilidad', async (req: Request, res: Response) => {
     try {
-        const { fecha, equipo_id, barbero_nombre } = req.query;
-        if (!fecha) {
-            return res.status(400).json({ ok: false, error: 'El parámetro fecha (YYYY-MM-DD) es obligatorio' });
+        const { fecha, equipo_id, barbero_nombre, servicio_id, duracion } = req.query;
+        if (!esFechaValida(fecha)) {
+            return res.status(400).json({ ok: false, error: 'El parámetro fecha (YYYY-MM-DD) es obligatorio y debe ser válido' });
         }
 
-        let resolvedEquipoId = equipo_id ? Number(equipo_id) : null;
+        const equipoId = await resolverEquipoId(equipo_id, barbero_nombre);
 
-        if (!resolvedEquipoId && barbero_nombre) {
-            const eqRes = await pool.query(
-                'SELECT id FROM equipo WHERE LOWER(nombre) = LOWER($1) LIMIT 1',
-                [String(barbero_nombre).trim()]
+        // Sin estilista: solo se devuelven las horas de inicio ya tomadas (comportamiento anterior)
+        if (!equipoId) {
+            const { rows } = await pool.query(
+                `SELECT id, equipo_id, fecha, hora_inicio, hora_fin, estado FROM turnos
+                 WHERE fecha = $1 AND estado IN ('PENDIENTE', 'CONFIRMADO') ORDER BY hora_inicio`,
+                [fecha]
             );
-            if (eqRes.rows.length > 0) {
-                resolvedEquipoId = eqRes.rows[0].id;
+            return res.json({
+                ok: true,
+                turnos_ocupados: rows,
+                horas_ocupadas: rows.map((r) => String(r.hora_inicio).slice(0, 5)),
+            });
+        }
+
+        // Duración del servicio que quiere reservar
+        let duracionMin = DURACION_POR_DEFECTO_MIN;
+        if (servicio_id !== undefined) {
+            const { rows } = await pool.query('SELECT duracion_minutos FROM servicios WHERE id = $1', [Number(servicio_id)]);
+            if (rows.length === 0) return res.status(404).json({ ok: false, error: 'El servicio no existe' });
+            duracionMin = rows[0].duracion_minutos;
+        } else if (duracion !== undefined) {
+            const d = Number(duracion);
+            if (!Number.isInteger(d) || d < 5 || d > 600) {
+                return res.status(400).json({ ok: false, error: 'duracion debe ser un número de minutos entre 5 y 600' });
             }
+            duracionMin = d;
         }
 
-        let query = `
-            SELECT id, equipo_id, fecha, hora_inicio, hora_fin, estado
-            FROM turnos
-            WHERE fecha = $1 AND estado IN ('PENDIENTE', 'CONFIRMADO')
-        `;
-        const params: any[] = [fecha];
+        const jornada = await obtenerJornada(pool, equipoId, fecha);
+        const ocupaciones = await obtenerOcupaciones(pool, equipoId, fecha);
 
-        if (resolvedEquipoId) {
-            params.push(resolvedEquipoId);
-            query += ` AND equipo_id = $${params.length}`;
+        const motivos: Record<string, string> = {};
+        for (const hora of HORAS_DE_LA_GRILLA) {
+            const motivo = motivoNoDisponible(fecha, hora, duracionMin, jornada, ocupaciones);
+            if (motivo) motivos[hora] = motivo;
         }
-
-        query += ` ORDER BY hora_inicio ASC`;
-        const { rows } = await pool.query(query, params);
-
-        const horasOcupadas = rows.map((r) => String(r.hora_inicio).slice(0, 5));
 
         res.json({
             ok: true,
-            turnos_ocupados: rows,
-            horas_ocupadas: horasOcupadas,
+            fecha,
+            equipo_id: equipoId,
+            duracion_minutos: duracionMin,
+            jornada,                                                    // null si ese día no atiende
+            horas_ocupadas: Object.keys(motivos),                       // lo que la página debe deshabilitar
+            horas_disponibles: HORAS_DE_LA_GRILLA.filter((h) => !motivos[h]),
+            motivos,                                                    // por qué no está disponible cada hora
         });
     } catch (error) {
         console.error('Error al consultar disponibilidad:', error);
@@ -52,8 +98,10 @@ router.get('/disponibilidad', async (req: Request, res: Response) => {
     }
 });
 
-// 2. Crear una nueva reserva de turno (con validación de cruces y accesibilidad)
-router.post('/', async (req: Request, res: Response) => {
+// ---------------------------------------------------------------------
+// 2. Reservar un turno (con o sin cuenta)
+// ---------------------------------------------------------------------
+router.post('/', autenticarOpcional, async (req: Request, res: Response) => {
     const client = await pool.connect();
     try {
         const {
@@ -70,38 +118,30 @@ router.post('/', async (req: Request, res: Response) => {
             notas_accesibilidad = null,
         } = req.body;
 
-        let resolvedEquipoId = equipo_id ? Number(equipo_id) : null;
+        // Con sesión de CLIENTE se usan los datos de su cuenta; sin sesión, los del formulario
+        const cuentaCliente = req.usuario?.rol === 'CLIENTE' ? req.usuario : null;
+        const equipoId = await resolverEquipoId(equipo_id, barbero_nombre);
+        const servicioId = Number(servicio_id);
 
-        if (!resolvedEquipoId && barbero_nombre) {
-            const eqRes = await pool.query(
-                'SELECT id FROM equipo WHERE LOWER(nombre) = LOWER($1) LIMIT 1',
-                [String(barbero_nombre).trim()]
-            );
-            if (eqRes.rows.length > 0) {
-                resolvedEquipoId = eqRes.rows[0].id;
-            }
-        }
-
-        if (!nombre_completo || !telefono_whatsapp || !servicio_id || !resolvedEquipoId || !fecha || !hora_inicio) {
+        if (!servicioId || !equipoId || !fecha || !hora_inicio || (!cuentaCliente && (!nombre_completo || !telefono_whatsapp))) {
             return res.status(400).json({
                 ok: false,
                 error: 'Faltan campos obligatorios para reservar el turno (nombre, teléfono, servicio, especialista, fecha, hora)',
             });
         }
-
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !/^\d{2}:\d{2}(:\d{2})?$/.test(hora_inicio)) {
+        if (!esFechaValida(fecha) || !esHoraValida(hora_inicio)) {
             return res.status(400).json({ ok: false, error: 'Formato inválido: fecha YYYY-MM-DD y hora_inicio HH:MM' });
         }
 
         await client.query('BEGIN');
 
         // Bloqueo por estilista y día: evita que dos personas reserven la misma hora al mismo tiempo
-        await client.query('SELECT pg_advisory_xact_lock($1::int, hashtext($2::text))', [equipo_id, fecha]);
+        await client.query('SELECT pg_advisory_xact_lock($1::int, hashtext($2::text))', [equipoId, fecha]);
 
-        // 1. Obtener precio actual y duración del servicio
+        // 1. Servicio (precio y duración actuales)
         const servicioRes = await client.query(
             'SELECT precio_actual, duracion_minutos, nombre FROM servicios WHERE id = $1 AND activo = TRUE',
-            [servicio_id]
+            [servicioId]
         );
         if (servicioRes.rows.length === 0) {
             await client.query('ROLLBACK');
@@ -109,33 +149,33 @@ router.post('/', async (req: Request, res: Response) => {
         }
         const { precio_actual, duracion_minutos, nombre: nombre_servicio } = servicioRes.rows[0];
 
-        // 2. Verificar que no exista cruce de horario para ese estilista en esa fecha
-        const cruceRes = await client.query(
-            `SELECT id FROM turnos
-             WHERE equipo_id = $1
-               AND fecha = $2
-               AND estado IN ('PENDIENTE', 'CONFIRMADO')
-               AND ($3::time < hora_fin AND ($3::time + ($4 || ' minutes')::interval)::time > hora_inicio)`,
-            [resolvedEquipoId, fecha, hora_inicio, duracion_minutos]
-        );
-
-        if (cruceRes.rows.length > 0) {
+        // 2. Estilista
+        const equipoRes = await client.query('SELECT nombre FROM equipo WHERE id = $1 AND activo = TRUE', [equipoId]);
+        if (equipoRes.rows.length === 0) {
             await client.query('ROLLBACK');
-            return res.status(409).json({
+            return res.status(404).json({ ok: false, error: 'El especialista seleccionado no existe o no está activo' });
+        }
+        const barberoNombre = equipoRes.rows[0].nombre;
+
+        // 3. ¿Se puede reservar? Jornada del estilista, bloqueos, citas que se cruzan y fechas pasadas
+        const jornada = await obtenerJornada(client, equipoId, fecha);
+        const ocupaciones = await obtenerOcupaciones(client, equipoId, fecha);
+        const motivo = motivoNoDisponible(fecha, hora_inicio, duracion_minutos, jornada, ocupaciones);
+        if (motivo) {
+            await client.query('ROLLBACK');
+            return res.status(motivo === 'PASADO' ? 400 : 409).json({
                 ok: false,
-                error: 'El especialista ya tiene un turno reservado en ese horario',
+                motivo,
+                error: MENSAJES_NO_DISPONIBLE[motivo],
             });
         }
 
-        // 3. Registrar o actualizar el cliente
-        const clienteRes = await client.query(
-            `INSERT INTO clientes (nombre_completo, telefono_whatsapp, email)
-             VALUES ($1, $2, $3) RETURNING id`,
-            [nombre_completo.trim(), telefono_whatsapp.trim(), email ? email.trim() : null]
-        );
-        const cliente_id = clienteRes.rows[0].id;
+        // 4. Cliente: el de la cuenta, o uno existente/nuevo si reserva sin cuenta
+        const cliente_id = cuentaCliente
+            ? cuentaCliente.cliente_id!
+            : await obtenerOCrearCliente(client, nombre_completo.trim(), telefono_whatsapp.trim(), email ? email.trim() : null);
 
-        // 4. Insertar el turno congelando el precio actual
+        // 5. Insertar el turno congelando el precio actual
         const turnoRes = await client.query(
             `INSERT INTO turnos (
                 cliente_id, servicio_id, equipo_id, fecha, hora_inicio,
@@ -147,45 +187,95 @@ router.post('/', async (req: Request, res: Response) => {
                 $7, $8, $9, $10
              ) RETURNING *`,
             [
-                cliente_id,
-                servicio_id,
-                resolvedEquipoId,
-                fecha,
-                hora_inicio,
-                duracion_minutos,
-                precio_actual,
-                requiere_apoyo_accesibilidad,
-                tipo_apoyo,
-                notas_accesibilidad,
+                cliente_id, servicioId, equipoId, fecha, hora_inicio, duracion_minutos,
+                precio_actual, requiere_apoyo_accesibilidad, tipo_apoyo, notas_accesibilidad,
             ]
         );
 
         await client.query('COMMIT');
 
         const turnoCreado = turnoRes.rows[0];
+        const nombreCliente = cuentaCliente ? cuentaCliente.nombre_completo : nombre_completo;
         const mensajeWhatsApp = encodeURIComponent(
-            `Hola Peluquería Yohana, soy ${nombre_completo}. Reservé el turno #${turnoCreado.id} para ${nombre_servicio} el día ${fecha} a las ${hora_inicio}.`
+            `Hola Peluquería Yohana, soy ${nombreCliente}. Reservé el turno #${turnoCreado.id} para ${nombre_servicio} el día ${fecha} a las ${String(hora_inicio).slice(0, 5)}.`
         );
 
         res.status(201).json({
             ok: true,
-            mensaje: 'Turno reservado exitosamente en PostgreSQL',
+            mensaje: 'Turno reservado exitosamente',
             data: {
                 ...turnoCreado,
                 nombre_servicio,
-                barbero_nombre: barbero_nombre || 'Especialista asignado',
+                barbero_nombre: barberoNombre,
             },
-            whatsapp_url: `https://wa.me/541145678901?text=${mensajeWhatsApp}`,
+            whatsapp_url: `https://wa.me/${process.env.WHATSAPP_NUMBER || ''}?text=${mensajeWhatsApp}`,
         });
     } catch (error: any) {
         await client.query('ROLLBACK');
         if (error.code === '23503') {
             return res.status(400).json({ ok: false, error: 'El estilista o el servicio indicado no existe' });
         }
+        if (error.code === '23514' || error.code === '22P02') {
+            return res.status(400).json({ ok: false, error: 'Algún dato de la reserva no es válido (por ejemplo, tipo_apoyo)' });
+        }
         console.error('Error al crear turno:', error);
         res.status(500).json({ ok: false, error: 'Error interno al procesar la reserva' });
     } finally {
         client.release();
+    }
+});
+
+// ---------------------------------------------------------------------
+// 3. Mis reservas (solo clientes con cuenta)
+// ---------------------------------------------------------------------
+router.get('/mis-reservas', autenticar, requireRol('CLIENTE'), async (req: Request, res: Response) => {
+    try {
+        const { rows } = await pool.query(
+            `SELECT t.id, to_char(t.fecha, 'YYYY-MM-DD') AS fecha,
+                    to_char(t.hora_inicio, 'HH24:MI') AS hora_inicio, to_char(t.hora_fin, 'HH24:MI') AS hora_fin,
+                    t.estado, t.precio_aplicado, s.nombre AS servicio, e.nombre AS estilista
+             FROM turnos t
+             JOIN servicios s ON s.id = t.servicio_id
+             JOIN equipo e ON e.id = t.equipo_id
+             WHERE t.cliente_id = $1
+             ORDER BY t.fecha DESC, t.hora_inicio DESC`,
+            [req.usuario!.cliente_id]
+        );
+        res.json({ ok: true, data: rows });
+    } catch (error) {
+        console.error('Error al listar reservas del cliente:', error);
+        res.status(500).json({ ok: false, error: 'Error al consultar tus reservas' });
+    }
+});
+
+// 4. Cancelar una de mis reservas (solo si todavía no ha empezado)
+router.patch('/:id/cancelar', autenticar, requireRol('CLIENTE'), async (req: Request, res: Response) => {
+    try {
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ ok: false, error: 'id inválido' });
+
+        const { rows } = await pool.query(
+            `SELECT estado, to_char(fecha, 'YYYY-MM-DD') AS fecha, to_char(hora_inicio, 'HH24:MI') AS hora_inicio
+             FROM turnos WHERE id = $1 AND cliente_id = $2`,
+            [id, req.usuario!.cliente_id]
+        );
+        if (rows.length === 0) return res.status(404).json({ ok: false, error: 'Reserva no encontrada' });
+
+        const turno = rows[0];
+        if (!['PENDIENTE', 'CONFIRMADO'].includes(turno.estado)) {
+            return res.status(409).json({ ok: false, error: `Una reserva ${turno.estado.toLowerCase()} ya no se puede cancelar` });
+        }
+        const ahora = ahoraEnColombia();
+        const yaEmpezo = turno.fecha < ahora.fecha || (turno.fecha === ahora.fecha && aMinutos(turno.hora_inicio) <= ahora.minutos);
+        if (yaEmpezo) {
+            return res.status(409).json({ ok: false, error: 'La reserva ya empezó o ya pasó, no se puede cancelar' });
+        }
+
+        await pool.query(`UPDATE turnos SET estado = 'CANCELADO' WHERE id = $1`, [id]);
+        res.json({ ok: true, data: { id, estado: 'CANCELADO' } });
+    } catch (error) {
+        console.error('Error al cancelar reserva:', error);
+        res.status(500).json({ ok: false, error: 'Error al cancelar la reserva' });
     }
 });
 

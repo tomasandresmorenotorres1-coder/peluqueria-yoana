@@ -151,7 +151,7 @@ export default function App() {
 
     async function loadDisponibilidad() {
       try {
-        const ocupadas = await fetchHorasOcupadas(selectedDate, selectedBarber || undefined);
+        const ocupadas = await fetchHorasOcupadas(selectedDate, selectedBarber || undefined, selectedService || undefined);
         if (active) setHorasOcupadas(ocupadas);
       } catch {
         if (active) setHorasOcupadas([]);
@@ -162,7 +162,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [selectedDate, selectedBarber]);
+  }, [selectedDate, selectedBarber, selectedService]);
 
   // Carrito de compras
   const totalItems = cart.reduce((s, i) => s + i.qty, 0);
