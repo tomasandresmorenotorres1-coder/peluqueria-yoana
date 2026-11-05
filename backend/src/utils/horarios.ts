@@ -1,19 +1,21 @@
 /**
- * Lógica de horarios: jornada de cada estilista, bloqueos y cruces de citas.
+ * Lógica de horarios: jornada de cada estilista/especialista, descansos, bloqueos y traslape de citas.
  * Todo lo que decide "¿se puede reservar a esta hora?" vive aquí, para que
- * la consulta de disponibilidad y la creación del turno usen las mismas reglas.
+ * la consulta de disponibilidad y la creación del turno usen exactamente las mismas reglas.
  */
 import { Pool, PoolClient } from 'pg';
 
 type Db = Pool | PoolClient;
 
-// Horas que muestra la página para elegir (debe coincidir con TIMES en frontend/src/data/constants.ts)
-export const HORAS_DE_LA_GRILLA = ['09:00', '10:00', '11:00', '12:00', '15:00', '16:00', '17:00', '18:00'];
+// Horas estándar que muestra la grilla
+export const HORAS_DE_LA_GRILLA = [
+    '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'
+];
 
 // Duración que se asume si la página no indica el servicio
 export const DURACION_POR_DEFECTO_MIN = 60;
 
-// Horario del negocio cuando el estilista no ha configurado el suyo: lunes a sábado, 9:00 a 20:00
+// Horario del negocio cuando el especialista no ha configurado el suyo: lunes a sábado, 9:00 a 20:00
 const JORNADA_POR_DEFECTO = { inicio: '09:00', fin: '20:00' };
 const DIAS_POR_DEFECTO = [1, 2, 3, 4, 5, 6];
 
@@ -62,8 +64,8 @@ export const ahoraEnColombia = (): { fecha: string; minutos: number } => {
 };
 
 /**
- * Jornada del estilista ese día, o null si no trabaja.
- * - Si el estilista configuró horarios, solo trabaja los días que tiene configurados.
+ * Jornada del especialista ese día, o null si no trabaja.
+ * - Si el especialista configuró horarios, solo trabaja los días que tiene configurados.
  * - Si no configuró nada, se usa el horario por defecto del negocio.
  */
 export const obtenerJornada = async (db: Db, equipoId: number, fecha: string): Promise<Jornada | null> => {
@@ -86,20 +88,34 @@ export interface Ocupacion {
     motivo: 'CITA' | 'BLOQUEO';
 }
 
-/** Citas activas y bloqueos de ese estilista ese día, ya convertidos a minutos. */
+/** Citas activas, descansos y bloqueos de ese especialista ese día, ya convertidos a minutos. */
 export const obtenerOcupaciones = async (db: Db, equipoId: number, fecha: string): Promise<Ocupacion[]> => {
+    const dia = diaDeLaSemana(fecha);
+
+    // 1. Citas activas
     const citas = await db.query(
         `SELECT to_char(hora_inicio, 'HH24:MI') AS inicio, to_char(hora_fin, 'HH24:MI') AS fin
          FROM turnos
          WHERE equipo_id = $1 AND fecha = $2 AND estado IN ('PENDIENTE', 'CONFIRMADO')`,
         [equipoId, fecha]
     );
+
+    // 2. Bloqueos puntuales
     const bloqueos = await db.query(
         `SELECT to_char(hora_inicio, 'HH24:MI') AS inicio, to_char(hora_fin, 'HH24:MI') AS fin
          FROM bloqueos_estilista WHERE equipo_id = $1 AND fecha = $2`,
         [equipoId, fecha]
     );
-    return [
+
+    // 3. Descansos configurados en el horario del especialista para este día de la semana
+    const descansos = await db.query(
+        `SELECT to_char(descanso_inicio, 'HH24:MI') AS d_inicio, to_char(descanso_fin, 'HH24:MI') AS d_fin
+         FROM horarios_estilista
+         WHERE equipo_id = $1 AND dia_semana = $2 AND descanso_inicio IS NOT NULL AND descanso_fin IS NOT NULL`,
+        [equipoId, dia]
+    );
+
+    const ocupaciones: Ocupacion[] = [
         ...citas.rows.map((r) => ({ inicio: aMinutos(r.inicio), fin: aMinutos(r.fin), motivo: 'CITA' as const })),
         // Un bloqueo sin horas ocupa todo el día
         ...bloqueos.rows.map((r) => ({
@@ -107,7 +123,15 @@ export const obtenerOcupaciones = async (db: Db, equipoId: number, fecha: string
             fin: r.fin ? aMinutos(r.fin) : 24 * 60,
             motivo: 'BLOQUEO' as const,
         })),
+        // Descanso del especialista
+        ...descansos.rows.map((r) => ({
+            inicio: aMinutos(r.d_inicio),
+            fin: aMinutos(r.d_fin),
+            motivo: 'BLOQUEO' as const,
+        })),
     ];
+
+    return ocupaciones;
 };
 
 export type MotivoNoDisponible =
@@ -143,23 +167,29 @@ export const motivoNoDisponible = (
 export const MENSAJES_NO_DISPONIBLE: Record<MotivoNoDisponible, string> = {
     PASADO: 'No se puede reservar en una fecha u hora que ya pasó',
     NO_TRABAJA: 'El especialista no atiende ese día',
-    FUERA_DE_JORNADA: 'Ese horario queda fuera de la jornada del especialista (el servicio no cabe antes del cierre)',
-    BLOQUEADO: 'El especialista no está disponible en ese horario',
-    OCUPADO: 'El especialista ya tiene un turno reservado en ese horario',
+    FUERA_DE_JORNADA: 'Ese horario queda fuera de la jornada del especialista',
+    BLOQUEADO: 'El horario seleccionado coincide con un descanso o bloqueo del especialista',
+    OCUPADO: 'El especialista seleccionado ya no tiene disponibilidad en el horario elegido',
 };
 
 // ---------------------------------------------------------------------
-// Horarios semanales y bloqueos (los usan el estilista y el administrador)
+// Horarios semanales, descansos y bloqueos
 // ---------------------------------------------------------------------
 export interface DiaHorario {
     dia_semana: number;
     hora_inicio: string;
     hora_fin: string;
+    descanso_inicio?: string | null;
+    descanso_fin?: string | null;
 }
 
 export const obtenerHorariosSemana = async (db: Db, equipoId: number) => {
     const { rows } = await db.query(
-        `SELECT dia_semana, to_char(hora_inicio, 'HH24:MI') AS hora_inicio, to_char(hora_fin, 'HH24:MI') AS hora_fin
+        `SELECT dia_semana, 
+                to_char(hora_inicio, 'HH24:MI') AS hora_inicio, 
+                to_char(hora_fin, 'HH24:MI') AS hora_fin,
+                to_char(descanso_inicio, 'HH24:MI') AS descanso_inicio,
+                to_char(descanso_fin, 'HH24:MI') AS descanso_fin
          FROM horarios_estilista WHERE equipo_id = $1 ORDER BY dia_semana`,
         [equipoId]
     );
@@ -179,6 +209,24 @@ export const validarHorariosSemana = (dias: unknown): string | null => {
         vistos.add(d.dia_semana);
         if (!esHoraValida(d.hora_inicio) || !esHoraValida(d.hora_fin)) return 'Usa horas con formato HH:MM';
         if (aMinutos(d.hora_fin) <= aMinutos(d.hora_inicio)) return 'La hora de fin debe ser posterior a la de inicio';
+
+        // Validar descansos si se indican
+        const tieneDescansoInicio = d.descanso_inicio !== undefined && d.descanso_inicio !== null && d.descanso_inicio !== '';
+        const tieneDescansoFin = d.descanso_fin !== undefined && d.descanso_fin !== null && d.descanso_fin !== '';
+        if (tieneDescansoInicio !== tieneDescansoFin) {
+            return 'Para configurar descanso debes indicar tanto inicio como fin';
+        }
+        if (tieneDescansoInicio && tieneDescansoFin) {
+            if (!esHoraValida(d.descanso_inicio) || !esHoraValida(d.descanso_fin)) {
+                return 'Las horas de descanso deben tener formato HH:MM';
+            }
+            if (aMinutos(d.descanso_fin as string) <= aMinutos(d.descanso_inicio as string)) {
+                return 'El fin del descanso debe ser posterior al inicio';
+            }
+            if (aMinutos(d.descanso_inicio as string) < aMinutos(d.hora_inicio) || aMinutos(d.descanso_fin as string) > aMinutos(d.hora_fin)) {
+                return 'El descanso debe estar dentro de la jornada laboral';
+            }
+        }
     }
     return null;
 };
@@ -190,10 +238,18 @@ export const guardarHorariosSemana = async (pool: Pool, equipoId: number, dias: 
         await client.query('BEGIN');
         await client.query('DELETE FROM horarios_estilista WHERE equipo_id = $1', [equipoId]);
         for (const d of dias) {
+            const tieneDescanso = d.descanso_inicio && d.descanso_fin;
             await client.query(
-                `INSERT INTO horarios_estilista (equipo_id, dia_semana, hora_inicio, hora_fin)
-                 VALUES ($1, $2, $3::time, $4::time)`,
-                [equipoId, d.dia_semana, d.hora_inicio, d.hora_fin]
+                `INSERT INTO horarios_estilista (equipo_id, dia_semana, hora_inicio, hora_fin, descanso_inicio, descanso_fin)
+                 VALUES ($1, $2, $3::time, $4::time, $5, $6)`,
+                [
+                    equipoId,
+                    d.dia_semana,
+                    d.hora_inicio,
+                    d.hora_fin,
+                    tieneDescanso ? d.descanso_inicio : null,
+                    tieneDescanso ? d.descanso_fin : null,
+                ]
             );
         }
         await client.query('COMMIT');

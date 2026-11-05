@@ -2,9 +2,9 @@
  * Seguridad de la API: inicio de sesión con token (JWT) y permisos por rol.
  *
  * Roles:
- *  - ADMIN:     puede hacer todo.
- *  - ESTILISTA: ve sus citas y ajusta sus horarios.
- *  - CLIENTE:   hace y consulta sus reservas.
+ *  - ADMIN:         puede hacer todo.
+ *  - ESPECIALISTA:  ve sus citas y ajusta sus horarios/descansos (sinónimo ESTILISTA).
+ *  - CLIENTE:       hace y consulta sus reservas.
  *
  * Cómo se usa en una ruta:
  *   router.get('/algo', autenticar, requireRol('ADMIN'), handler)
@@ -14,7 +14,7 @@ import jwt from 'jsonwebtoken';
 import { timingSafeEqual } from 'crypto';
 import { pool } from '../config/db';
 
-export type Rol = 'ADMIN' | 'ESTILISTA' | 'CLIENTE';
+export type Rol = 'ADMIN' | 'ESPECIALISTA' | 'ESTILISTA' | 'CLIENTE';
 
 export interface UsuarioAuth {
     id: number;
@@ -23,6 +23,7 @@ export interface UsuarioAuth {
     rol: Rol;
     equipo_id: number | null;
     cliente_id: number | null;
+    telefono?: string | null;
 }
 
 // Permite usar req.usuario en todas las rutas
@@ -42,7 +43,7 @@ const obtenerSecreto = (): string => {
         throw new Error(`JWT_SECRET no está configurado o tiene menos de ${MIN_LARGO_SECRETO} caracteres`);
     }
     // Rechaza el texto de ejemplo de .env.example: es público, cualquiera podría falsificar sesiones
-    if (secreto.startsWith('cambia_')) {
+    if (secreto.startsWith('cambia_') || secreto.startsWith('tu_secreto_largo')) {
         throw new Error('JWT_SECRET sigue con el valor de ejemplo: cámbialo por un texto propio y secreto');
     }
     return secreto;
@@ -75,7 +76,7 @@ const leerUsuarioDelToken = async (req: Request): Promise<UsuarioAuth | null> =>
 
     // Se consulta la base en cada petición: si desactivan o cambian al usuario, aplica de inmediato
     const { rows } = await pool.query(
-        `SELECT id, email, nombre_completo, rol, equipo_id, cliente_id
+        `SELECT id, email, nombre_completo, rol, equipo_id, cliente_id, telefono
          FROM usuarios WHERE id = $1 AND activo = TRUE`,
         [Number(datos.sub)]
     );
@@ -126,7 +127,18 @@ export const requireRol = (...roles: Rol[]) =>
         if (!req.usuario) {
             return res.status(401).json({ ok: false, error: 'Debes iniciar sesión' });
         }
-        if (!roles.includes(req.usuario.rol)) {
+
+        const usuarioRol = req.usuario.rol;
+        // Compatibilidad entre ESPECIALISTA y ESTILISTA
+        const tienePermiso = roles.some((r) => {
+            if (r === usuarioRol) return true;
+            if ((r === 'ESPECIALISTA' || r === 'ESTILISTA') && (usuarioRol === 'ESPECIALISTA' || usuarioRol === 'ESTILISTA')) {
+                return true;
+            }
+            return false;
+        });
+
+        if (!tienePermiso) {
             return res.status(403).json({ ok: false, error: 'No tienes permiso para esta acción' });
         }
         next();

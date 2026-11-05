@@ -28,10 +28,12 @@ router.get('/servicios', async (req: Request, res: Response) => {
                    s.precio_actual, s.duracion_minutos, s.icono, s.texto_alternativo,
                    s.genero,
                    COALESCE(ROUND(AVG(r.calificacion)::numeric, 1), 5.0) AS calificacion_promedio,
-                   COUNT(r.id)::int AS total_resenas
+                   COUNT(r.id)::int AS total_resenas,
+                   COALESCE(ARRAY_AGG(DISTINCT es.equipo_id) FILTER (WHERE es.equipo_id IS NOT NULL), '{}') AS especialistas_ids
             FROM servicios s
             JOIN categorias c ON s.categoria_id = c.id
             LEFT JOIN resenas r ON r.servicio_id = s.id AND r.aprobada = TRUE
+            LEFT JOIN especialistas_servicios es ON es.servicio_id = s.id
             WHERE s.activo = TRUE
         `;
         const params: any[] = [];
@@ -58,6 +60,7 @@ router.get('/servicios', async (req: Request, res: Response) => {
             img: DEFAULT_SERVICE_IMAGES[r.id] || 'https://images.unsplash.com/photo-1560066984-138daaa70c8f?w=600&h=400&fit=crop&auto=format',
             rating: Number(r.calificacion_promedio || 5.0),
             totalReviews: Number(r.total_resenas || 0),
+            especialistas_ids: (r.especialistas_ids || []).map(Number),
             // Campos nativos
             nombre: r.nombre,
             descripcion: r.descripcion,
@@ -99,18 +102,19 @@ router.patch('/servicios/:id/precio', autenticar, requireRol('ADMIN'), async (re
 
         res.json({ ok: true, mensaje: 'Precio de servicio actualizado', data: rows[0] });
     } catch (error) {
-        res.status(500).json({ ok: false, error: 'Error al actualizar el precio del servicio' });
+        console.error('Error al actualizar precio de servicio:', error);
+        res.status(500).json({ ok: false, error: 'Error al actualizar precio de servicio' });
     }
 });
 
-// 3. Catálogo de productos disponibles
+// 3. Obtener productos de la tienda
 router.get('/productos', async (req: Request, res: Response) => {
     try {
         const { genero, categoria } = req.query;
         let query = `
-            SELECT p.id, c.nombre AS categoria_nombre, p.nombre, p.marca, p.descripcion,
-                   p.precio_actual, p.stock, p.imagen_url, p.texto_alternativo,
-                   p.etiqueta, p.genero
+            SELECT p.id, c.nombre AS categoria_nombre, p.nombre, p.marca,
+                   p.descripcion, p.precio_actual, p.stock, p.imagen_url,
+                   p.texto_alternativo, p.etiqueta, p.genero
             FROM productos p
             JOIN categorias c ON p.categoria_id = c.id
             WHERE p.activo = TRUE
@@ -122,7 +126,7 @@ router.get('/productos', async (req: Request, res: Response) => {
             query += ` AND p.genero = $${params.length}`;
         } else if (categoria && categoria !== 'todos') {
             params.push(categoria);
-            query += ` AND (LOWER(c.nombre) = LOWER($${params.length}) OR p.genero = $${params.length})`;
+            query += ` AND LOWER(c.nombre) = LOWER($${params.length})`;
         }
 
         query += ` ORDER BY p.id ASC`;
@@ -131,16 +135,17 @@ router.get('/productos', async (req: Request, res: Response) => {
         const data = rows.map((r) => ({
             id: r.id,
             name: r.nombre,
-            brand: r.marca || 'General',
-            price: Number(r.precio_actual),
-            img: r.imagen_url,
-            tag: r.etiqueta || null,
-            category: r.genero || 'hombre',
-            stock: r.stock,
+            brand: r.marca,
             desc: r.descripcion,
+            price: Number(r.precio_actual),
+            stock: r.stock,
+            img: r.imagen_url,
+            tag: r.etiqueta,
+            category: r.genero,
             // Campos nativos
             nombre: r.nombre,
             marca: r.marca,
+            descripcion: r.descripcion,
             precio_actual: Number(r.precio_actual),
             imagen_url: r.imagen_url,
             texto_alternativo: r.texto_alternativo,
@@ -191,16 +196,28 @@ router.patch('/productos/:id/precio', autenticar, requireRol('ADMIN'), async (re
     }
 });
 
-// 5. Equipo de estilistas y barberos
-router.get('/equipo', async (_req: Request, res: Response) => {
+// 5. Equipo de estilistas y barberos (con matriz de servicios autorizados)
+router.get('/equipo', async (req: Request, res: Response) => {
     try {
-        const { rows } = await pool.query(`
-            SELECT id, nombre, especialidad, biografia, anios_experiencia, genero,
-                   foto_url, texto_alternativo, capacitado_accesibilidad
-            FROM equipo
-            WHERE activo = TRUE
-            ORDER BY id ASC
-        `);
+        const { servicio_id } = req.query;
+        let query = `
+            SELECT e.id, e.nombre, e.especialidad, e.biografia, e.anios_experiencia, e.genero,
+                   e.foto_url, e.texto_alternativo, e.capacitado_accesibilidad, e.telefono,
+                   COALESCE(ARRAY_AGG(DISTINCT es.servicio_id) FILTER (WHERE es.servicio_id IS NOT NULL), '{}') AS servicios_ids
+            FROM equipo e
+            LEFT JOIN especialistas_servicios es ON es.equipo_id = e.id
+            WHERE e.activo = TRUE
+        `;
+        const params: any[] = [];
+
+        if (servicio_id) {
+            params.push(Number(servicio_id));
+            query += ` AND e.id IN (SELECT equipo_id FROM especialistas_servicios WHERE servicio_id = $${params.length})`;
+        }
+
+        query += ` GROUP BY e.id ORDER BY e.id ASC`;
+
+        const { rows } = await pool.query(query, params);
 
         const data = rows.map((r) => ({
             id: r.id,
@@ -209,6 +226,8 @@ router.get('/equipo', async (_req: Request, res: Response) => {
             exp: r.anios_experiencia || '5 años',
             gender: r.genero || 'M',
             img: r.foto_url,
+            servicios_ids: (r.servicios_ids || []).map(Number),
+            telefono: r.telefono,
             // Campos nativos
             nombre: r.nombre,
             especialidad: r.especialidad,

@@ -1,15 +1,26 @@
 import type {
   BookingRequest,
+  CitaEspecialista,
   Comment,
+  DiaHorario,
   GalleryItem,
   HeroStats,
   OrderRequest,
+  PreferenciaPagoResponse,
   Product,
   Service,
   StaffMember,
+  TurnoCliente,
+  User,
 } from '@/types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
+
+const TOKEN_KEY = 'py_auth_token';
+
+export const getStoredToken = (): string | null => localStorage.getItem(TOKEN_KEY);
+export const setStoredToken = (token: string) => localStorage.setItem(TOKEN_KEY, token);
+export const removeStoredToken = () => localStorage.removeItem(TOKEN_KEY);
 
 // Datos semilla de resiliencia (para garantizar que NUNCA haya una pantalla en blanco si el servidor está iniciando)
 const FALLBACK_STATS: HeroStats = {
@@ -20,18 +31,18 @@ const FALLBACK_STATS: HeroStats = {
 };
 
 const FALLBACK_SERVICES: Service[] = [
-  { id: 1, name: "Corte Clásico", desc: "Corte tradicional con tijera y máquina, finalizado con detalles de navaja.", duration: "45 min", price: 25000, icon: "✂️", category: "hombre", img: "https://images.unsplash.com/photo-1599351431202-1e0f0137899a?w=600&h=400&fit=crop&auto=format", rating: 5.0 },
-  { id: 2, name: "Arreglo de Barba", desc: "Perfilado, recorte y afeitado con navaja recta, toalla caliente incluida.", duration: "30 min", price: 20000, icon: "🪒", category: "hombre", img: "https://images.unsplash.com/photo-1621605815971-fbc98d665033?w=600&h=400&fit=crop&auto=format", rating: 4.8 },
-  { id: 3, name: "Corte + Barba", desc: "El combo completo: corte a medida más tratamiento completo de barba.", duration: "75 min", price: 50000, icon: "💈", category: "hombre", img: "https://images.unsplash.com/photo-1503951914875-452162b0f3f1?w=600&h=400&fit=crop&auto=format", rating: 5.0 },
-  { id: 4, name: "Coloración", desc: "Tinte profesional para cabello o barba con productos de primera calidad.", duration: "90 min", price: 100000, icon: "🎨", category: "unisex", img: "https://images.unsplash.com/photo-1560066984-138daaa70c8f?w=600&h=400&fit=crop&auto=format", rating: 4.9 },
-  { id: 5, name: "Tratamiento Capilar", desc: "Hidratación profunda, masaje capilar y acondicionamiento con keratina.", duration: "60 min", price: 350000, icon: "🌿", category: "unisex", img: "https://images.unsplash.com/photo-1527799820374-dcf8d9d4a388?w=600&h=400&fit=crop&auto=format", rating: 5.0 },
-  { id: 6, name: "Afeitado con Navaja", desc: "Experiencia completa de afeitado clásico con navaja, espuma caliente y toalla.", duration: "40 min", price: 30000, icon: "⚔️", category: "hombre", img: "https://images.unsplash.com/photo-1585747860715-2ba37e788b70?w=600&h=400&fit=crop&auto=format", rating: 4.8 },
-  { id: 7, name: "Corte Femenino", desc: "Corte personalizado para mujer con técnica en capas, degradados y puntas.", duration: "60 min", price: 80000, icon: "✂️", category: "mujer", img: "https://images.unsplash.com/photo-1516975080664-ed2fc6a32937?w=600&h=400&fit=crop&auto=format", rating: 5.0 },
-  { id: 8, name: "Keratina Brasileña", desc: "Alisado y nutrición profunda con keratina de alta calidad, elimina el frizz por meses.", duration: "120 min", price: 450000, icon: "💎", category: "mujer", img: "https://images.unsplash.com/photo-1604654894610-df63bc536371?w=600&h=400&fit=crop&auto=format", rating: 5.0 },
-  { id: 9, name: "Manicure Completo", desc: "Limado, cutículas, hidratación y esmaltado con esmalte tradicional o semipermanente.", duration: "45 min", price: 45000, icon: "💅", category: "mujer", img: "https://images.unsplash.com/photo-1632345031435-8727f6897d53?w=600&h=400&fit=crop&auto=format", rating: 4.9 },
-  { id: 10, name: "Pedicure Spa", desc: "Baño de pies, exfoliación, masaje relajante y esmaltado con acabado profesional.", duration: "60 min", price: 80000, icon: "🦶", category: "mujer", img: "https://images.unsplash.com/photo-1519415510236-718bdfcd89c8?w=600&h=400&fit=crop&auto=format", rating: 4.8 },
-  { id: 11, name: "Manicure + Pedicure", desc: "El combo completo de manos y pies, con masaje y esmaltado a elección.", duration: "105 min", price: 120000, icon: "✨", category: "mujer", img: "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=600&h=400&fit=crop&auto=format", rating: 5.0 },
-  { id: 12, name: "Tinte & Mechas", desc: "Coloración femenina completa: raíces, mechas, babylights o balayage artesanal.", duration: "150 min", price: 750000, icon: "🌈", category: "mujer", img: "https://images.unsplash.com/photo-1521590832167-7bcbfaa6381f?w=600&h=400&fit=crop&auto=format", rating: 5.0 },
+  { id: 1, name: "Corte Clásico", desc: "Corte tradicional con tijera y máquina, finalizado con detalles de navaja.", duration: "45 min", price: 25000, icon: "✂️", category: "hombre", img: "https://images.unsplash.com/photo-1599351431202-1e0f0137899a?w=600&h=400&fit=crop&auto=format", rating: 5.0, especialistas_ids: [1, 3, 4] },
+  { id: 2, name: "Arreglo de Barba", desc: "Perfilado, recorte y afeitado con navaja recta, toalla caliente incluida.", duration: "30 min", price: 20000, icon: "🪒", category: "hombre", img: "https://images.unsplash.com/photo-1621605815971-fbc98d665033?w=600&h=400&fit=crop&auto=format", rating: 4.8, especialistas_ids: [1, 3] },
+  { id: 3, name: "Corte + Barba", desc: "El combo completo: corte a medida más tratamiento completo de barba.", duration: "75 min", price: 50000, icon: "💈", category: "hombre", img: "https://images.unsplash.com/photo-1503951914875-452162b0f3f1?w=600&h=400&fit=crop&auto=format", rating: 5.0, especialistas_ids: [1, 3] },
+  { id: 4, name: "Coloración", desc: "Tinte profesional para cabello o barba con productos de primera calidad.", duration: "90 min", price: 100000, icon: "🎨", category: "unisex", img: "https://images.unsplash.com/photo-1560066984-138daaa70c8f?w=600&h=400&fit=crop&auto=format", rating: 4.9, especialistas_ids: [2, 6] },
+  { id: 5, name: "Tratamiento Capilar", desc: "Hidratación profunda, masaje capilar y acondicionamiento con keratina.", duration: "60 min", price: 350000, icon: "🌿", category: "unisex", img: "https://images.unsplash.com/photo-1527799820374-dcf8d9d4a388?w=600&h=400&fit=crop&auto=format", rating: 5.0, especialistas_ids: [4, 6] },
+  { id: 6, name: "Afeitado con Navaja", desc: "Experiencia completa de afeitado clásico con navaja, espuma caliente y toalla.", duration: "40 min", price: 30000, icon: "⚔️", category: "hombre", img: "https://images.unsplash.com/photo-1585747860715-2ba37e788b70?w=600&h=400&fit=crop&auto=format", rating: 4.8, especialistas_ids: [1, 3] },
+  { id: 7, name: "Corte Femenino", desc: "Corte personalizado para mujer con técnica en capas, degradados y puntas.", duration: "60 min", price: 80000, icon: "✂️", category: "mujer", img: "https://images.unsplash.com/photo-1516975080664-ed2fc6a32937?w=600&h=400&fit=crop&auto=format", rating: 5.0, especialistas_ids: [3, 4, 6] },
+  { id: 8, name: "Keratina Brasileña", desc: "Alisado y nutrición profunda con keratina de alta calidad, elimina el frizz por meses.", duration: "120 min", price: 450000, icon: "💎", category: "mujer", img: "https://images.unsplash.com/photo-1604654894610-df63bc536371?w=600&h=400&fit=crop&auto=format", rating: 5.0, especialistas_ids: [4] },
+  { id: 9, name: "Manicure Completo", desc: "Limado, cutículas, hidratación y esmaltado con esmalte tradicional o semipermanente.", duration: "45 min", price: 45000, icon: "💅", category: "mujer", img: "https://images.unsplash.com/photo-1632345031435-8727f6897d53?w=600&h=400&fit=crop&auto=format", rating: 4.9, especialistas_ids: [5] },
+  { id: 10, name: "Pedicure Spa", desc: "Baño de pies, exfoliación, masaje relajante y esmaltado con acabado profesional.", duration: "60 min", price: 80000, icon: "🦶", category: "mujer", img: "https://images.unsplash.com/photo-1519415510236-718bdfcd89c8?w=600&h=400&fit=crop&auto=format", rating: 4.8, especialistas_ids: [5] },
+  { id: 11, name: "Manicure + Pedicure", desc: "El combo completo de manos y pies, con masaje y esmaltado a elección.", duration: "105 min", price: 120000, icon: "✨", category: "mujer", img: "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=600&h=400&fit=crop&auto=format", rating: 5.0, especialistas_ids: [5] },
+  { id: 12, name: "Tinte & Mechas", desc: "Coloración femenina completa: raíces, mechas, babylights o balayage artesanal.", duration: "150 min", price: 750000, icon: "🌈", category: "mujer", img: "https://images.unsplash.com/photo-1521590832167-7bcbfaa6381f?w=600&h=400&fit=crop&auto=format", rating: 5.0, especialistas_ids: [2, 6] },
 ];
 
 const FALLBACK_PRODUCTS: Product[] = [
@@ -50,12 +61,12 @@ const FALLBACK_PRODUCTS: Product[] = [
 ];
 
 const FALLBACK_STAFF: StaffMember[] = [
-  { id: 1, name: "Marco Ríos", role: "Maestro Barbero", exp: "12 años", gender: "M", img: "https://images.unsplash.com/photo-1599351431202-1e0f0137899a?w=400&h=500&fit=crop&auto=format" },
-  { id: 2, name: "Diego Torres", role: "Especialista en Color", exp: "8 años", gender: "M", img: "https://images.unsplash.com/photo-1647140655214-e4a2d914971f?w=400&h=500&fit=crop&auto=format" },
-  { id: 3, name: "Sebastián Cruz", role: "Estilista Senior", exp: "6 años", gender: "M", img: "https://images.unsplash.com/photo-1503951914875-452162b0f3f1?w=400&h=500&fit=crop&auto=format" },
-  { id: 4, name: "Yohana Pérez", role: "Maestra Peluquera & Keratinas", exp: "15 años", gender: "F", img: "https://images.unsplash.com/photo-1516975080664-ed2fc6a32937?w=400&h=500&fit=crop&auto=format" },
-  { id: 5, name: "Valentina López", role: "Manicurista & Nail Art", exp: "7 años", gender: "F", img: "https://images.unsplash.com/photo-1604654894610-df63bc536371?w=400&h=500&fit=crop&auto=format" },
-  { id: 6, name: "Camila Romero", role: "Colorista & Estilista", exp: "9 años", gender: "F", img: "https://images.unsplash.com/photo-1560066984-138daaa70c8f?w=400&h=500&fit=crop&auto=format" },
+  { id: 1, name: "Marco Ríos", role: "Maestro Barbero", exp: "12 años", gender: "M", img: "https://images.unsplash.com/photo-1599351431202-1e0f0137899a?w=400&h=500&fit=crop&auto=format", servicios_ids: [1, 2, 3, 6] },
+  { id: 2, name: "Diego Torres", role: "Especialista en Color", exp: "8 años", gender: "M", img: "https://images.unsplash.com/photo-1647140655214-e4a2d914971f?w=400&h=500&fit=crop&auto=format", servicios_ids: [4, 12] },
+  { id: 3, name: "Sebastián Cruz", role: "Estilista Senior", exp: "6 años", gender: "M", img: "https://images.unsplash.com/photo-1503951914875-452162b0f3f1?w=400&h=500&fit=crop&auto=format", servicios_ids: [1, 7, 2, 3, 6] },
+  { id: 4, name: "Yohana Pérez", role: "Maestra Peluquera & Keratinas", exp: "15 años", gender: "F", img: "https://images.unsplash.com/photo-1516975080664-ed2fc6a32937?w=400&h=500&fit=crop&auto=format", servicios_ids: [5, 8, 7, 1] },
+  { id: 5, name: "Valentina López", role: "Manicurista & Nail Art", exp: "7 años", gender: "F", img: "https://images.unsplash.com/photo-1604654894610-df63bc536371?w=400&h=500&fit=crop&auto=format", servicios_ids: [9, 10, 11] },
+  { id: 6, name: "Camila Romero", role: "Colorista & Estilista", exp: "9 años", gender: "F", img: "https://images.unsplash.com/photo-1560066984-138daaa70c8f?w=400&h=500&fit=crop&auto=format", servicios_ids: [4, 5, 7, 12] },
 ];
 
 const FALLBACK_GALLERY: GalleryItem[] = [
@@ -75,12 +86,17 @@ const FALLBACK_COMMENTS: Comment[] = [
 
 async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
+  const token = getStoredToken();
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(options?.headers as Record<string, string>),
+  };
+
   const response = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
     ...options,
+    headers,
   });
 
   if (!response.ok) {
@@ -91,7 +107,9 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
   return response.json();
 }
 
+// ---------------------------------------------------------------------
 // 1. Estadísticas y Métricas del Hero
+// ---------------------------------------------------------------------
 export async function fetchEstadisticas(): Promise<HeroStats> {
   try {
     const res = await request<{ ok: boolean; data: HeroStats }>('/estadisticas');
@@ -102,7 +120,9 @@ export async function fetchEstadisticas(): Promise<HeroStats> {
   }
 }
 
-// 2. Servicios del Catálogo
+// ---------------------------------------------------------------------
+// 2. Servicios del Catálogo (con matriz de especialistas)
+// ---------------------------------------------------------------------
 export async function fetchServicios(categoria?: string): Promise<Service[]> {
   try {
     const query = categoria && categoria !== 'todos' ? `?categoria=${encodeURIComponent(categoria)}` : '';
@@ -114,7 +134,9 @@ export async function fetchServicios(categoria?: string): Promise<Service[]> {
   }
 }
 
+// ---------------------------------------------------------------------
 // 3. Productos de la Tienda
+// ---------------------------------------------------------------------
 export async function fetchProductos(categoria?: string): Promise<Product[]> {
   try {
     const query = categoria && categoria !== 'todos' ? `?genero=${encodeURIComponent(categoria)}` : '';
@@ -126,18 +148,26 @@ export async function fetchProductos(categoria?: string): Promise<Product[]> {
   }
 }
 
-// 4. Equipo de Especialistas
-export async function fetchEquipo(): Promise<StaffMember[]> {
+// ---------------------------------------------------------------------
+// 4. Equipo de Especialistas (con lista de servicios autorizados)
+// ---------------------------------------------------------------------
+export async function fetchEquipo(servicioId?: number): Promise<StaffMember[]> {
   try {
-    const res = await request<{ ok: boolean; data: StaffMember[] }>('/catalogo/equipo');
+    const query = servicioId ? `?servicio_id=${servicioId}` : '';
+    const res = await request<{ ok: boolean; data: StaffMember[] }>(`/catalogo/equipo${query}`);
     return res.data;
   } catch {
     console.warn('Conectando con datos cacheados de equipo...');
+    if (servicioId) {
+      return FALLBACK_STAFF.filter((s) => s.servicios_ids?.includes(servicioId));
+    }
     return FALLBACK_STAFF;
   }
 }
 
+// ---------------------------------------------------------------------
 // 5. Galería de Trabajos
+// ---------------------------------------------------------------------
 export async function fetchGaleria(): Promise<GalleryItem[]> {
   try {
     const res = await request<{ ok: boolean; data: GalleryItem[] }>('/catalogo/galeria');
@@ -148,7 +178,9 @@ export async function fetchGaleria(): Promise<GalleryItem[]> {
   }
 }
 
+// ---------------------------------------------------------------------
 // 6. Reseñas y Testimonios
+// ---------------------------------------------------------------------
 export async function fetchResenas(): Promise<{ comments: Comment[]; promedio: number; total: number }> {
   try {
     const res = await request<{
@@ -185,8 +217,9 @@ export async function publicarResena(data: {
   return res.data;
 }
 
+// ---------------------------------------------------------------------
 // 7. Disponibilidad y Reserva de Turnos
-// Si se indica el servicio, el servidor tiene en cuenta cuánto dura (un servicio largo ocupa también las horas siguientes)
+// ---------------------------------------------------------------------
 export async function fetchHorasOcupadas(fecha: string, barberoNombre?: string, servicioId?: number): Promise<string[]> {
   try {
     const params = new URLSearchParams({ fecha });
@@ -208,11 +241,160 @@ export async function crearReservaTurno(data: BookingRequest): Promise<{ turno: 
   return { turno: res.data, whatsapp_url: res.whatsapp_url };
 }
 
+// ---------------------------------------------------------------------
 // 8. Crear Orden de Productos desde el Carrito
+// ---------------------------------------------------------------------
 export async function crearOrdenCompra(data: OrderRequest): Promise<{ orden: any }> {
   const res = await request<{ ok: boolean; data: any }>('/pagos/ordenes', {
     method: 'POST',
     body: JSON.stringify(data),
   });
   return { orden: res.data };
+}
+
+// ---------------------------------------------------------------------
+// 9. AUTENTICACIÓN: LOGIN Y REGISTRO CON PIN
+// ---------------------------------------------------------------------
+export async function loginUsuario(email: string, password: string): Promise<{ token: string; usuario: User }> {
+  const res = await request<{ ok: boolean; token: string; usuario: User }>('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+  if (res.token) {
+    setStoredToken(res.token);
+  }
+  return { token: res.token, usuario: res.usuario };
+}
+
+export async function solicitarPinRegistro(data: {
+  nombre_completo: string;
+  telefono_whatsapp: string;
+  email: string;
+  password: string;
+}): Promise<{ ok: boolean; mensaje: string; email: string }> {
+  return request<{ ok: boolean; mensaje: string; email: string }>('/auth/solicitar-pin-registro', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function verificarPinRegistro(email: string, pin: string): Promise<{ token: string; usuario: User }> {
+  const res = await request<{ ok: boolean; token: string; usuario: User }>('/auth/verificar-pin', {
+    method: 'POST',
+    body: JSON.stringify({ email, pin }),
+  });
+  if (res.token) {
+    setStoredToken(res.token);
+  }
+  return { token: res.token, usuario: res.usuario };
+}
+
+export async function fetchMiPerfil(): Promise<User | null> {
+  const token = getStoredToken();
+  if (!token) return null;
+  try {
+    const res = await request<{ ok: boolean; usuario: User }>('/auth/me');
+    return res.usuario;
+  } catch {
+    removeStoredToken();
+    return null;
+  }
+}
+
+export function cerrarSesion(): void {
+  removeStoredToken();
+}
+
+// ---------------------------------------------------------------------
+// 10. CLIENTE: MIS RESERVAS
+// ---------------------------------------------------------------------
+export async function fetchMisReservas(): Promise<TurnoCliente[]> {
+  const res = await request<{ ok: boolean; data: TurnoCliente[] }>('/turnos/mis-reservas');
+  return res.data;
+}
+
+export async function cancelarMiReserva(id: number): Promise<void> {
+  await request<{ ok: boolean }>(`/turnos/${id}/cancelar`, {
+    method: 'PATCH',
+  });
+}
+
+// ---------------------------------------------------------------------
+// 11. ESPECIALISTA: PANEL DE GESTIÓN DE CITAS Y HORARIOS
+// ---------------------------------------------------------------------
+export async function fetchMisCitasEspecialista(params?: { fecha?: string; estado?: string }): Promise<CitaEspecialista[]> {
+  const q = new URLSearchParams();
+  if (params?.fecha) q.append('fecha', params.fecha);
+  if (params?.estado) q.append('estado', params.estado);
+  const query = q.toString() ? `?${q.toString()}` : '';
+  const res = await request<{ ok: boolean; data: CitaEspecialista[] }>(`/especialista/mis-citas${query}`);
+  return res.data;
+}
+
+export async function cambiarEstadoCitaEspecialista(id: number, estado: 'CONFIRMADO' | 'COMPLETADO' | 'CANCELADO'): Promise<void> {
+  await request<{ ok: boolean }>(`/especialista/mis-citas/${id}/estado`, {
+    method: 'PATCH',
+    body: JSON.stringify({ estado }),
+  });
+}
+
+export async function fetchMisHorariosEspecialista(): Promise<{ personalizado: boolean; dias: DiaHorario[] }> {
+  const res = await request<{ ok: boolean; data: { personalizado: boolean; dias: DiaHorario[] } }>('/especialista/mis-horarios');
+  return res.data;
+}
+
+export async function guardarMisHorariosEspecialista(dias: DiaHorario[]): Promise<{ personalizado: boolean; dias: DiaHorario[] }> {
+  const res = await request<{ ok: boolean; data: { personalizado: boolean; dias: DiaHorario[] } }>('/especialista/mis-horarios', {
+    method: 'PUT',
+    body: JSON.stringify({ dias }),
+  });
+  return res.data;
+}
+
+export async function fetchMisBloqueosEspecialista(): Promise<any[]> {
+  const res = await request<{ ok: boolean; data: any[] }>('/especialista/mis-bloqueos');
+  return res.data;
+}
+
+export async function crearBloqueoEspecialista(datos: {
+  fecha: string;
+  hora_inicio?: string;
+  hora_fin?: string;
+  motivo?: string;
+}): Promise<any> {
+  const res = await request<{ ok: boolean; data: any }>('/especialista/mis-bloqueos', {
+    method: 'POST',
+    body: JSON.stringify(datos),
+  });
+  return res.data;
+}
+
+export async function eliminarBloqueoEspecialista(id: number): Promise<void> {
+  await request<{ ok: boolean }>(`/especialista/mis-bloqueos/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+// ---------------------------------------------------------------------
+// 12. PASARELA DE PAGO MERCADO PAGO
+// ---------------------------------------------------------------------
+export async function crearPreferenciaMercadoPago(data: {
+  turno_id?: number;
+  orden_id?: number;
+  monto?: number;
+  titulo?: string;
+  es_abono?: boolean;
+}): Promise<PreferenciaPagoResponse> {
+  const res = await request<{ ok: boolean; data: PreferenciaPagoResponse }>('/pagos/crear-preferencia', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  return res.data;
+}
+
+export async function confirmarPagoSimulado(referencia: string): Promise<void> {
+  await request<{ ok: boolean }>('/pagos/confirmar-pago', {
+    method: 'POST',
+    body: JSON.stringify({ referencia_transaccion: referencia, estado: 'APROBADO' }),
+  });
 }

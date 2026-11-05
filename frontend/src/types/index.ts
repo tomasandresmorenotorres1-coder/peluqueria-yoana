@@ -20,6 +20,7 @@ export type Service = {
   category: "hombre" | "mujer" | "unisex";
   img?: string;
   rating?: number;
+  especialistas_ids?: number[];
 };
 
 export type ServiceTab = "todos" | "hombre" | "mujer" | "unisex";
@@ -43,12 +44,14 @@ export type CartItem = {
 };
 
 export type StaffMember = {
-  id?: number;
+  id: number;
   name: string;
   role: string;
   exp: string;
   gender: "M" | "F";
   img: string;
+  servicios_ids?: number[];
+  telefono?: string;
 };
 
 export type GalleryItem = {
@@ -84,4 +87,58 @@ export type OrderRequest = {
   metodo_entrega?: "RETIRO_LOCAL" | "DOMICILIO";
   direccion_entrega?: string;
   items: { id: number; qty: number }[];
+};
+
+export type Rol = "CLIENTE" | "ESPECIALISTA" | "ESTILISTA" | "ADMIN";
+
+export type User = {
+  id: number;
+  email: string;
+  nombre_completo: string;
+  rol: Rol;
+  equipo_id?: number | null;
+  cliente_id?: number | null;
+  telefono?: string | null;
+};
+
+export type TurnoCliente = {
+  id: number;
+  fecha: string;
+  hora_inicio: string;
+  hora_fin: string;
+  estado: "PENDIENTE" | "CONFIRMADO" | "COMPLETADO" | "CANCELADO";
+  precio_aplicado: number;
+  servicio: string;
+  estilista: string;
+};
+
+export type DiaHorario = {
+  dia_semana: number;
+  hora_inicio: string;
+  hora_fin: string;
+  descanso_inicio?: string | null;
+  descanso_fin?: string | null;
+};
+
+export type CitaEspecialista = {
+  id: number;
+  fecha: string;
+  hora_inicio: string;
+  hora_fin: string;
+  estado: "PENDIENTE" | "CONFIRMADO" | "COMPLETADO" | "CANCELADO";
+  precio_aplicado: number;
+  servicio: string;
+  cliente: string;
+  telefono_whatsapp: string;
+  requiere_apoyo_accesibilidad?: boolean;
+  tipo_apoyo?: string;
+  notas_accesibilidad?: string;
+};
+
+export type PreferenciaPagoResponse = {
+  id: string;
+  init_point: string;
+  sandbox_init_point?: string;
+  monto_total: number;
+  referencia: string;
 };

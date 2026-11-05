@@ -1,6 +1,6 @@
 /**
- * Panel del ESTILISTA: ver sus propias citas y ajustar sus horarios.
- * Base: /api/estilista  (solo rol ESTILISTA; cada uno ve únicamente lo suyo)
+ * Panel del ESPECIALISTA / ESTILISTA: ver sus propias citas y ajustar sus horarios y descansos.
+ * Base: /api/especialista o /api/estilista
  */
 import { Router, Request, Response, NextFunction } from 'express';
 import { pool } from '../config/db';
@@ -11,12 +11,12 @@ import {
 } from '../utils/horarios';
 
 const router = Router();
-router.use(autenticar, requireRol('ESTILISTA'));
+router.use(autenticar, requireRol('ESPECIALISTA', 'ESTILISTA'));
 
-// El estilista siempre trabaja sobre su propio equipo_id (viene de su cuenta, nunca del cliente HTTP)
+// El especialista siempre trabaja sobre su propio equipo_id (viene de su cuenta, nunca del cliente HTTP)
 const exigirEquipo = (req: Request, res: Response, next: NextFunction) => {
     if (!req.usuario?.equipo_id) {
-        return res.status(403).json({ ok: false, error: 'Tu cuenta no está vinculada a un perfil del equipo' });
+        return res.status(403).json({ ok: false, error: 'Tu cuenta no está vinculada a un perfil de especialista en el equipo' });
     }
     next();
 };
@@ -59,7 +59,7 @@ router.get('/mis-citas', async (req: Request, res: Response) => {
         );
         res.json({ ok: true, data: rows });
     } catch (error) {
-        console.error('Error al listar citas del estilista:', error);
+        console.error('Error al listar citas del especialista:', error);
         res.status(500).json({ ok: false, error: 'Error al consultar tus citas' });
     }
 });
@@ -71,7 +71,7 @@ router.patch('/mis-citas/:id/estado', async (req: Request, res: Response) => {
         if (!ESTADOS_PERMITIDOS.includes(estado)) {
             return res.status(400).json({ ok: false, error: `estado debe ser uno de: ${ESTADOS_PERMITIDOS.join(', ')}` });
         }
-        // El "AND equipo_id" garantiza que no pueda tocar citas de otro estilista
+        // El "AND equipo_id" garantiza que no pueda tocar citas de otro especialista
         const { rows } = await pool.query(
             `UPDATE turnos SET estado = $1 WHERE id = $2 AND equipo_id = $3 RETURNING id, estado`,
             [estado, Number(req.params.id), req.usuario!.equipo_id]
@@ -84,7 +84,7 @@ router.patch('/mis-citas/:id/estado', async (req: Request, res: Response) => {
     }
 });
 
-// 3. Mi horario semanal
+// 3. Mi horario semanal (incluye descansos)
 router.get('/mis-horarios', async (req: Request, res: Response) => {
     try {
         res.json({ ok: true, data: await obtenerHorariosSemana(pool, req.usuario!.equipo_id!) });
@@ -94,8 +94,7 @@ router.get('/mis-horarios', async (req: Request, res: Response) => {
     }
 });
 
-// 4. Cambiar mi horario semanal. Lista vacía = volver al horario por defecto del negocio.
-//    Ejemplo: { "dias": [ { "dia_semana": 1, "hora_inicio": "10:00", "hora_fin": "18:00" } ] }
+// 4. Cambiar mi horario semanal con días, horas de inicio, fin y descansos
 router.put('/mis-horarios', async (req: Request, res: Response) => {
     try {
         const error = validarHorariosSemana(req.body.dias);
@@ -108,7 +107,7 @@ router.put('/mis-horarios', async (req: Request, res: Response) => {
     }
 });
 
-// 5. Mis bloqueos (días u horas en que no atiendo)
+// 5. Mis bloqueos puntuales
 router.get('/mis-bloqueos', async (req: Request, res: Response) => {
     try {
         res.json({ ok: true, data: await listarBloqueos(pool, req.usuario!.equipo_id!) });

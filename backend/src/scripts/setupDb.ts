@@ -4,6 +4,7 @@ import { Client } from 'pg';
 import dotenv from 'dotenv';
 
 dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const DB_HOST = process.env.DB_HOST || 'localhost';
 const DB_PORT = Number(process.env.DB_PORT) || 5432;
@@ -16,13 +17,17 @@ export async function setupDatabase() {
     console.log(`Conectando a PostgreSQL en ${DB_HOST}:${DB_PORT} como usuario '${DB_USER}'...`);
 
     // 1. Conexión a la base por defecto 'postgres' para verificar/crear la BD si no existe
-    const adminClient = new Client({
-        host: DB_HOST,
-        port: DB_PORT,
-        user: DB_USER,
-        password: DB_PASSWORD,
-        database: 'postgres',
-    });
+    const adminClient = new Client(
+        process.env.DATABASE_URL
+            ? { connectionString: process.env.DATABASE_URL.replace(/peluqueria_yoana.*$/, 'postgres') }
+            : {
+                host: DB_HOST,
+                port: DB_PORT,
+                user: DB_USER,
+                password: DB_PASSWORD,
+                database: 'postgres',
+            }
+    );
 
     try {
         await adminClient.connect();
@@ -45,13 +50,17 @@ export async function setupDatabase() {
     }
 
     // 2. Conectar a la base de datos de la aplicación para aplicar esquema y seeds
-    const appClient = new Client({
-        host: DB_HOST,
-        port: DB_PORT,
-        user: DB_USER,
-        password: DB_PASSWORD,
-        database: DB_NAME,
-    });
+    const appClient = new Client(
+        process.env.DATABASE_URL
+            ? { connectionString: process.env.DATABASE_URL }
+            : {
+                host: DB_HOST,
+                port: DB_PORT,
+                user: DB_USER,
+                password: DB_PASSWORD,
+                database: DB_NAME,
+            }
+    );
 
     try {
         await appClient.connect();
@@ -60,9 +69,10 @@ export async function setupDatabase() {
         const schemaPath = path.resolve(__dirname, '../../database/01_shema.sql');
         const seedPath = path.resolve(__dirname, '../../database/02_shema.sql');
         const authPath = path.resolve(__dirname, '../../database/03_usuarios.sql');
+        const actualizPath = path.resolve(__dirname, '../../database/04_actualizaciones_especialistas_pines_mp.sql');
 
         // Las tablas de usuarios y horarios dependen de equipo y clientes: se borran primero para recrearlas limpias
-        await appClient.query('DROP TABLE IF EXISTS bloqueos_estilista, horarios_estilista, usuarios CASCADE');
+        await appClient.query('DROP TABLE IF EXISTS registro_pines, especialistas_servicios, bloqueos_estilista, horarios_estilista, usuarios CASCADE');
 
         if (fs.existsSync(schemaPath)) {
             const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
@@ -79,6 +89,11 @@ export async function setupDatabase() {
         if (fs.existsSync(authPath)) {
             await appClient.query(fs.readFileSync(authPath, 'utf-8'));
             console.log('✅ Usuarios y horarios 03_usuarios.sql aplicados exitosamente.');
+        }
+
+        if (fs.existsSync(actualizPath)) {
+            await appClient.query(fs.readFileSync(actualizPath, 'utf-8'));
+            console.log('✅ Actualizaciones y especialistas 04_actualizaciones_especialistas_pines_mp.sql aplicados exitosamente.');
         }
 
         console.log('🎉 Base de datos configurada e integrada al 100%.');

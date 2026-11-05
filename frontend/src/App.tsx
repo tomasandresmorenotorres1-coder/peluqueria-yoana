@@ -12,6 +12,11 @@ import TestimonialsSection from "@/components/TestimonialsSection";
 import Footer from "@/components/Footer";
 import WhatsAppButton from "@/components/WhatsAppButton";
 import CartDrawer from "@/components/CartDrawer";
+import AuthModal from "@/components/AuthModal";
+import PromoRegisterModal from "@/components/PromoRegisterModal";
+import ClientHistoryModal from "@/components/ClientHistoryModal";
+import SpecialistDashboard from "@/components/SpecialistDashboard";
+import Chatbot from "@/components/Chatbot";
 
 import {
   fetchEstadisticas,
@@ -24,6 +29,8 @@ import {
   fetchHorasOcupadas,
   crearReservaTurno,
   crearOrdenCompra,
+  fetchMiPerfil,
+  cerrarSesion,
 } from "@/services/api";
 
 import type {
@@ -37,9 +44,18 @@ import type {
   Service,
   ServiceTab,
   StaffMember,
+  User,
 } from "@/types";
 
 export default function App() {
+  // Usuario y autenticación
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<"login" | "register">("login");
+  const [clientHistoryOpen, setClientHistoryOpen] = useState(false);
+  const [specialistDashboardOpen, setSpecialistDashboardOpen] = useState(false);
+  const [promoRegisterOpen, setPromoRegisterOpen] = useState(false);
+
   // Datos dinámicos
   const [services, setServices] = useState<Service[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -87,9 +103,25 @@ export default function App() {
   const [commentError, setCommentError] = useState<string | null>(null);
   const [hoverRating, setHoverRating] = useState(0);
 
-  // 1. Cargar datos dinámicos al montar
+  // 1. Cargar usuario y datos iniciales al montar
   useEffect(() => {
     let isMounted = true;
+
+    async function loadUser() {
+      try {
+        const user = await fetchMiPerfil();
+        if (isMounted && user) {
+          setCurrentUser(user);
+          // Si el usuario es especialista, redirigir automáticamente a su panel (Req 1)
+          if (user.rol === "ESPECIALISTA" || user.rol === "ESTILISTA") {
+            setSpecialistDashboardOpen(true);
+          }
+        }
+      } catch (err) {
+        console.warn("Sin sesión activa");
+      }
+    }
+
     async function loadInitialData() {
       setLoading(true);
       try {
@@ -136,7 +168,14 @@ export default function App() {
       }
     }
 
+    loadUser();
     loadInitialData();
+
+    // Comprobar retorno de Mercado Pago en URL
+    if (window.location.search.includes("pago=aprobado") || window.location.search.includes("pago=exito")) {
+      setToastMessage("✓ ¡Pago con Mercado Pago recibido y confirmado exitosamente!");
+    }
+
     return () => {
       isMounted = false;
     };
@@ -163,6 +202,27 @@ export default function App() {
       active = false;
     };
   }, [selectedDate, selectedBarber, selectedService]);
+
+  // Manejo de sesión
+  const handleAuthSuccess = (user: User) => {
+    setCurrentUser(user);
+    setToastMessage(`¡Bienvenido, ${user.nombre_completo}!`);
+
+    // Redirección según rol (Req 1)
+    if (user.rol === "ESPECIALISTA" || user.rol === "ESTILISTA") {
+      setSpecialistDashboardOpen(true);
+    } else {
+      setSpecialistDashboardOpen(false);
+    }
+  };
+
+  const handleLogout = () => {
+    cerrarSesion();
+    setCurrentUser(null);
+    setSpecialistDashboardOpen(false);
+    setClientHistoryOpen(false);
+    setToastMessage("Sesión cerrada correctamente.");
+  };
 
   // Carrito de compras
   const totalItems = cart.reduce((s, i) => s + i.qty, 0);
@@ -287,6 +347,17 @@ export default function App() {
     setCommentSent(false);
   }
 
+  // Si el especialista tiene su panel abierto, mostrar la vista del panel de especialista
+  if (specialistDashboardOpen && currentUser && (currentUser.rol === "ESPECIALISTA" || currentUser.rol === "ESTILISTA")) {
+    return (
+      <SpecialistDashboard
+        user={currentUser}
+        onLogout={handleLogout}
+        onGoHome={() => setSpecialistDashboardOpen(false)}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-cream text-charcoal font-body antialiased selection:bg-gold/30 selection:text-charcoal flex flex-col">
       {/* NOTIFICACIÓN TOAST FLOTANTE */}
@@ -305,9 +376,17 @@ export default function App() {
       {/* NAVBAR SUPERIOR */}
       <Navbar
         totalItems={totalItems}
+        currentUser={currentUser}
         onCartClick={() => setCartOpen(true)}
         onToggleMobileMenu={() => setMobileMenuOpen((v) => !v)}
         onNavClick={scrollTo}
+        onOpenAuthModal={(mode = "login") => {
+          setAuthModalMode(mode);
+          setAuthModalOpen(true);
+        }}
+        onOpenSpecialistDashboard={() => setSpecialistDashboardOpen(true)}
+        onOpenClientHistory={() => setClientHistoryOpen(true)}
+        onLogout={handleLogout}
       />
 
       {/* MENÚ MÓVIL DESPLEGABLE */}
@@ -326,10 +405,11 @@ export default function App() {
         onSelectService={handleSelectServiceAndScroll}
       />
 
-      {/* SECCIÓN DE RESERVAS & CITAS */}
+      {/* SECCIÓN DE RESERVAS & CITAS (Con matriz de especialistas y Mercado Pago) */}
       <BookingSection
         services={services}
         staff={staff}
+        currentUser={currentUser}
         selectedService={selectedService}
         selectedBarber={selectedBarber}
         selectedTime={selectedTime}
@@ -345,6 +425,7 @@ export default function App() {
         onSelectTime={setSelectedTime}
         onBook={handleBook}
         onReset={handleResetBooking}
+        onOpenPromoRegister={() => setPromoRegisterOpen(true)}
       />
 
       {/* SECCIÓN TIENDA DE PRODUCTOS */}
@@ -390,7 +471,14 @@ export default function App() {
       {/* FOOTER */}
       <Footer />
 
-      {/* BOTÓN FLOTANTE WHATSAPP */}
+      {/* CHATBOT ASISTENTE VIRTUAL (Req 5) */}
+      <Chatbot
+        services={services}
+        onSelectServiceAndBook={handleSelectServiceAndScroll}
+        onScrollToBooking={() => scrollTo("reservar")}
+      />
+
+      {/* BOTÓN FLOTANTE WHATSAPP (Req 8) */}
       <WhatsAppButton />
 
       {/* DRAWER LATERAL DE CARRITO */}
@@ -402,6 +490,40 @@ export default function App() {
         onClose={() => setCartOpen(false)}
         onRemove={removeFromCart}
         onCheckout={handleCheckout}
+      />
+
+      {/* MODAL DE AUTENTICACIÓN (LOGIN Y REGISTRO CON PIN) */}
+      <AuthModal
+        isOpen={authModalOpen}
+        initialMode={authModalMode}
+        onClose={() => setAuthModalOpen(false)}
+        onSuccess={handleAuthSuccess}
+      />
+
+      {/* MODAL PROMO SUGERENCIA DE REGISTRO (Req 7) */}
+      <PromoRegisterModal
+        isOpen={promoRegisterOpen}
+        onClose={() => setPromoRegisterOpen(false)}
+        onOpenRegister={() => {
+          setAuthModalMode("register");
+          setAuthModalOpen(true);
+        }}
+        onOpenLogin={() => {
+          setAuthModalMode("login");
+          setAuthModalOpen(true);
+        }}
+        onContinueAsGuest={() => {
+          setPromoRegisterOpen(false);
+          scrollTo("reservar");
+        }}
+      />
+
+      {/* MODAL DE HISTORIAL DEL CLIENTE */}
+      <ClientHistoryModal
+        isOpen={clientHistoryOpen}
+        user={currentUser}
+        onClose={() => setClientHistoryOpen(false)}
+        onNewBookingClick={() => scrollTo("reservar")}
       />
     </div>
   );

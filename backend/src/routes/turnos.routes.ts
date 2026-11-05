@@ -15,7 +15,7 @@ import {
 
 const router = Router();
 
-/** Busca el id del estilista, ya sea por equipo_id o por su nombre. */
+/** Busca el id del especialista, ya sea por equipo_id o por su nombre. */
 const resolverEquipoId = async (equipo_id: unknown, barbero_nombre: unknown): Promise<number | null> => {
     if (equipo_id) {
         const id = Number(equipo_id);
@@ -31,10 +31,8 @@ const resolverEquipoId = async (equipo_id: unknown, barbero_nombre: unknown): Pr
 };
 
 // ---------------------------------------------------------------------
-// 1. Horarios libres de un estilista en una fecha
+// 1. Horarios libres de un especialista en una fecha
 //    GET /api/turnos/disponibilidad?fecha=YYYY-MM-DD&equipo_id=1&servicio_id=3
-//    Si se indica servicio_id (o duracion en minutos), se tiene en cuenta cuánto dura:
-//    un servicio de 2 horas ocupa también la hora siguiente.
 // ---------------------------------------------------------------------
 router.get('/disponibilidad', async (req: Request, res: Response) => {
     try {
@@ -45,7 +43,7 @@ router.get('/disponibilidad', async (req: Request, res: Response) => {
 
         const equipoId = await resolverEquipoId(equipo_id, barbero_nombre);
 
-        // Sin estilista: solo se devuelven las horas de inicio ya tomadas (comportamiento anterior)
+        // Sin especialista seleccionado: solo se devuelven las horas de inicio ya tomadas
         if (!equipoId) {
             const { rows } = await pool.query(
                 `SELECT id, equipo_id, fecha, hora_inicio, hora_fin, estado FROM turnos
@@ -135,7 +133,7 @@ router.post('/', autenticarOpcional, async (req: Request, res: Response) => {
 
         await client.query('BEGIN');
 
-        // Bloqueo por estilista y día: evita que dos personas reserven la misma hora al mismo tiempo
+        // Bloqueo por especialista y día: evita condiciones de carrera concurrentes
         await client.query('SELECT pg_advisory_xact_lock($1::int, hashtext($2::text))', [equipoId, fecha]);
 
         // 1. Servicio (precio y duración actuales)
@@ -149,7 +147,7 @@ router.post('/', autenticarOpcional, async (req: Request, res: Response) => {
         }
         const { precio_actual, duracion_minutos, nombre: nombre_servicio } = servicioRes.rows[0];
 
-        // 2. Estilista
+        // 2. Especialista
         const equipoRes = await client.query('SELECT nombre FROM equipo WHERE id = $1 AND activo = TRUE', [equipoId]);
         if (equipoRes.rows.length === 0) {
             await client.query('ROLLBACK');
@@ -157,7 +155,20 @@ router.post('/', autenticarOpcional, async (req: Request, res: Response) => {
         }
         const barberoNombre = equipoRes.rows[0].nombre;
 
-        // 3. ¿Se puede reservar? Jornada del estilista, bloqueos, citas que se cruzan y fechas pasadas
+        // 3. Matriz de Especialistas y Servicios: validar que el especialista esté autorizado para el servicio
+        const autorizacionRes = await client.query(
+            'SELECT 1 FROM especialistas_servicios WHERE equipo_id = $1 AND servicio_id = $2',
+            [equipoId, servicioId]
+        );
+        if (autorizacionRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                ok: false,
+                error: `El especialista ${barberoNombre} no realiza el servicio "${nombre_servicio}". Por favor selecciona un especialista autorizado.`,
+            });
+        }
+
+        // 4. ¿Se puede reservar? Jornada del especialista, descansos, bloqueos y citas que se traslapan
         const jornada = await obtenerJornada(client, equipoId, fecha);
         const ocupaciones = await obtenerOcupaciones(client, equipoId, fecha);
         const motivo = motivoNoDisponible(fecha, hora_inicio, duracion_minutos, jornada, ocupaciones);
@@ -170,12 +181,31 @@ router.post('/', autenticarOpcional, async (req: Request, res: Response) => {
             });
         }
 
-        // 4. Cliente: el de la cuenta, o uno existente/nuevo si reserva sin cuenta
+        // 5. Verificación estricta de traslape en base de datos: Si el especialista ya tiene un turno en esa fecha/hora
+        const traslapeRes = await client.query(
+            `SELECT id FROM turnos
+             WHERE equipo_id = $1
+               AND fecha = $2
+               AND estado IN ('PENDIENTE', 'CONFIRMADO')
+               AND hora_inicio < ($3::time + ($4 || ' minutes')::interval)::time
+               AND hora_fin > $3::time`,
+            [equipoId, fecha, hora_inicio, duracion_minutos]
+        );
+        if (traslapeRes.rows.length > 0) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({
+                ok: false,
+                motivo: 'OCUPADO',
+                error: 'El especialista seleccionado ya no tiene disponibilidad en el horario elegido',
+            });
+        }
+
+        // 6. Cliente: el de la cuenta, o uno existente/nuevo si reserva sin cuenta
         const cliente_id = cuentaCliente
             ? cuentaCliente.cliente_id!
             : await obtenerOCrearCliente(client, nombre_completo.trim(), telefono_whatsapp.trim(), email ? email.trim() : null);
 
-        // 5. Insertar el turno congelando el precio actual
+        // 7. Insertar el turno congelando el precio actual
         const turnoRes = await client.query(
             `INSERT INTO turnos (
                 cliente_id, servicio_id, equipo_id, fecha, hora_inicio,
@@ -212,11 +242,18 @@ router.post('/', autenticarOpcional, async (req: Request, res: Response) => {
         });
     } catch (error: any) {
         await client.query('ROLLBACK');
+        if (error.code === '23505') {
+            return res.status(409).json({
+                ok: false,
+                motivo: 'OCUPADO',
+                error: 'El especialista seleccionado ya no tiene disponibilidad en el horario elegido',
+            });
+        }
         if (error.code === '23503') {
-            return res.status(400).json({ ok: false, error: 'El estilista o el servicio indicado no existe' });
+            return res.status(400).json({ ok: false, error: 'El especialista o el servicio indicado no existe' });
         }
         if (error.code === '23514' || error.code === '22P02') {
-            return res.status(400).json({ ok: false, error: 'Algún dato de la reserva no es válido (por ejemplo, tipo_apoyo)' });
+            return res.status(400).json({ ok: false, error: 'Algún dato de la reserva no es válido' });
         }
         console.error('Error al crear turno:', error);
         res.status(500).json({ ok: false, error: 'Error interno al procesar la reserva' });

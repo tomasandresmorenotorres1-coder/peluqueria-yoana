@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { MercadoPagoConfig, Preference } from 'mercadopago';
 import { pool } from '../config/db';
 import { autenticarOpcional, requireWebhookSecret } from '../middleware/auth';
 import { obtenerOCrearCliente } from '../utils/clientes';
@@ -18,7 +19,6 @@ router.post('/ordenes', autenticarOpcional, async (req: Request, res: Response) 
             items, // Array de { producto_id (o id), cantidad (o qty) }
         } = req.body;
 
-        // Si compra un cliente con cuenta, se usan los datos de su cuenta; si no, los del formulario (compra sin cuenta)
         const cuentaCliente = req.usuario?.rol === 'CLIENTE' ? req.usuario : null;
         if (!Array.isArray(items) || items.length === 0 || (!cuentaCliente && (!nombre_completo || !telefono_whatsapp))) {
             return res.status(400).json({ ok: false, error: 'Datos de cliente o lista de productos incompletos' });
@@ -106,7 +106,193 @@ router.post('/ordenes', autenticarOpcional, async (req: Request, res: Response) 
     }
 });
 
-// 2. Iniciar transacción en la Pasarela de Pagos (para un Turno o una Orden)
+// 2. CREAR PREFERENCIA DE PAGO EN MERCADO PAGO (/api/pagos/crear-preferencia)
+router.post('/crear-preferencia', autenticarOpcional, async (req: Request, res: Response) => {
+    try {
+        const {
+            turno_id = null,
+            orden_id = null,
+            items: itemsBody,
+            monto: montoEspecificado,
+            titulo = 'Servicio Peluquería Yohana',
+            es_abono = false,
+        } = req.body;
+
+        let monto = Number(montoEspecificado || 0);
+        let items: Array<{ id?: string; title: string; quantity: number; unit_price: number }> = [];
+
+        if (turno_id) {
+            const tRes = await pool.query(
+                `SELECT t.id, t.precio_aplicado, s.nombre AS servicio, e.nombre AS especialista
+                 FROM turnos t
+                 JOIN servicios s ON s.id = t.servicio_id
+                 JOIN equipo e ON e.id = t.equipo_id
+                 WHERE t.id = $1`,
+                [turno_id]
+            );
+            if (tRes.rows.length === 0) return res.status(404).json({ ok: false, error: 'Turno no encontrado' });
+            const turno = tRes.rows[0];
+            const precioBase = Number(turno.precio_aplicado);
+            // Si es abono de reserva, se cobra el 50%
+            monto = es_abono ? Math.round(precioBase * 0.5) : (monto > 0 ? monto : precioBase);
+            items = [
+                {
+                    id: `turno-${turno.id}`,
+                    title: es_abono
+                        ? `Abono (50%): ${turno.servicio} con ${turno.especialista}`
+                        : `Turno: ${turno.servicio} con ${turno.especialista}`,
+                    quantity: 1,
+                    unit_price: monto,
+                },
+            ];
+        } else if (orden_id) {
+            const oRes = await pool.query('SELECT total_orden FROM ordenes WHERE id = $1', [orden_id]);
+            if (oRes.rows.length === 0) return res.status(404).json({ ok: false, error: 'Orden no encontrada' });
+            monto = Number(oRes.rows[0].total_orden);
+            items = [
+                {
+                    id: `orden-${orden_id}`,
+                    title: `Productos Peluquería Yohana - Orden #${orden_id}`,
+                    quantity: 1,
+                    unit_price: monto,
+                },
+            ];
+        } else if (Array.isArray(itemsBody) && itemsBody.length > 0) {
+            items = itemsBody.map((it: any) => ({
+                id: String(it.id || 'py-item'),
+                title: String(it.title || titulo),
+                quantity: Number(it.quantity || 1),
+                unit_price: Number(it.unit_price || it.price || 0),
+            }));
+            monto = items.reduce((sum, it) => sum + it.unit_price * it.quantity, 0);
+        } else if (monto > 0) {
+            items = [
+                {
+                    id: 'py-servicio',
+                    title: titulo,
+                    quantity: 1,
+                    unit_price: monto,
+                },
+            ];
+        } else {
+            return res.status(400).json({ ok: false, error: 'Debe especificar turno_id, orden_id, items o un monto válido' });
+        }
+
+        const referencia_transaccion = `MP-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN || '';
+
+        let preferenciaId = `pref_${referencia_transaccion}`;
+        let initPoint = `${frontendUrl}/?pago=simulado&ref=${referencia_transaccion}`;
+
+        const isRealToken = accessToken && !accessToken.startsWith('TEST-000000') && accessToken.length > 20;
+
+        if (isRealToken) {
+            try {
+                const client = new MercadoPagoConfig({ accessToken });
+                const preference = new Preference(client);
+                const mpRes = await preference.create({
+                    body: {
+                        items: items.map((i) => ({
+                            id: i.id || 'py-1',
+                            title: i.title,
+                            quantity: i.quantity,
+                            unit_price: i.unit_price,
+                            currency_id: 'COP',
+                        })),
+                        back_urls: {
+                            success: `${frontendUrl}/?pago=aprobado&ref=${referencia_transaccion}`,
+                            failure: `${frontendUrl}/?pago=fallido&ref=${referencia_transaccion}`,
+                            pending: `${frontendUrl}/?pago=pendiente&ref=${referencia_transaccion}`,
+                        },
+                        auto_return: 'approved',
+                        external_reference: referencia_transaccion,
+                    },
+                });
+
+                if (mpRes.id) {
+                    preferenciaId = mpRes.id;
+                    initPoint = mpRes.init_point || mpRes.sandbox_init_point || initPoint;
+                }
+            } catch (mpError: any) {
+                console.warn('⚠️ SDK Mercado Pago en modo local/sandbox:', mpError.message || mpError);
+            }
+        }
+
+        // Guardar registro del pago en estado PENDIENTE
+        const { rows: pagoRows } = await pool.query(
+            `INSERT INTO pagos (
+                turno_id, orden_id, pasarela_nombre, referencia_transaccion,
+                monto_total, metodo_pago, estado_pago, preferencia_id, init_point
+             )
+             VALUES ($1, $2, 'MERCADOPAGO', $3, $4, 'MERCADO_PAGO', 'PENDIENTE', $5, $6)
+             RETURNING *`,
+            [turno_id, orden_id, referencia_transaccion, monto, preferenciaId, initPoint]
+        );
+
+        res.status(201).json({
+            ok: true,
+            mensaje: 'Preferencia de pago Mercado Pago generada con éxito',
+            data: {
+                ...pagoRows[0],
+                id: preferenciaId,
+                init_point: initPoint,
+                sandbox_init_point: initPoint,
+                items,
+                monto_total: monto,
+                referencia: referencia_transaccion,
+            },
+        });
+    } catch (error: any) {
+        console.error('Error al generar preferencia de Mercado Pago:', error);
+        res.status(500).json({ ok: false, error: 'Error al generar la preferencia de Mercado Pago' });
+    }
+});
+
+// 3. Confirmar o simular aprobación de pago
+router.post('/confirmar-pago', async (req: Request, res: Response) => {
+    const client = await pool.connect();
+    try {
+        const { referencia_transaccion, estado = 'APROBADO' } = req.body;
+        if (!referencia_transaccion) {
+            return res.status(400).json({ ok: false, error: 'referencia_transaccion es obligatoria' });
+        }
+
+        await client.query('BEGIN');
+        const pagoRes = await client.query(
+            `UPDATE pagos
+             SET estado_pago = $1, fecha_pago = CURRENT_TIMESTAMP
+             WHERE referencia_transaccion = $2 RETURNING *`,
+            [estado, referencia_transaccion]
+        );
+
+        if (pagoRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ ok: false, error: 'Transacción de pago no encontrada' });
+        }
+
+        const pago = pagoRes.rows[0];
+        if (estado === 'APROBADO') {
+            if (pago.turno_id) {
+                await client.query(`UPDATE turnos SET estado = 'CONFIRMADO' WHERE id = $1`, [pago.turno_id]);
+            }
+            if (pago.orden_id) {
+                await client.query(`UPDATE ordenes SET estado_orden = 'PAGADA' WHERE id = $1`, [pago.orden_id]);
+            }
+        }
+
+        await client.query('COMMIT');
+        res.json({ ok: true, mensaje: `Pago ${estado.toLowerCase()} exitosamente`, data: pago });
+    } catch (error: any) {
+        await client.query('ROLLBACK');
+        console.error('Error al confirmar pago:', error);
+        res.status(500).json({ ok: false, error: 'Error interno al actualizar el estado del pago' });
+    } finally {
+        client.release();
+    }
+});
+
+// 4. Iniciar transacción tradicional (WOMPI/Efectivo)
 router.post('/iniciar', async (req: Request, res: Response) => {
     try {
         const {
@@ -116,7 +302,7 @@ router.post('/iniciar', async (req: Request, res: Response) => {
             metodo_pago,
         } = req.body;
 
-        const METODOS = ['TARJETA', 'PSE', 'NEQUI', 'DAVIPLATA', 'EFECTIVO_LOCAL'];
+        const METODOS = ['TARJETA', 'PSE', 'NEQUI', 'DAVIPLATA', 'EFECTIVO_LOCAL', 'MERCADO_PAGO'];
         if (!METODOS.includes(metodo_pago)) {
             return res.status(400).json({ ok: false, error: `metodo_pago debe ser uno de: ${METODOS.join(', ')}` });
         }
@@ -161,7 +347,7 @@ router.post('/iniciar', async (req: Request, res: Response) => {
     }
 });
 
-// 3. Webhook / Confirmación de estado de la Pasarela de Pagos
+// 5. Webhook con firma compartida
 router.post('/confirmar', requireWebhookSecret, async (req: Request, res: Response) => {
     const client = await pool.connect();
     try {

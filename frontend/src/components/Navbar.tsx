@@ -1,19 +1,30 @@
 import { useState, useEffect } from "react";
 import { NAV_LINKS } from "@/data/constants";
+import type { User } from "@/types";
 
 type NavbarProps = {
   totalItems: number;
+  currentUser: User | null;
   activeSection?: string;
   onCartClick: () => void;
   onToggleMobileMenu: () => void;
   onNavClick: (id: string) => void;
+  onOpenAuthModal: (mode?: "login" | "register") => void;
+  onOpenSpecialistDashboard: () => void;
+  onOpenClientHistory: () => void;
+  onLogout: () => void;
 };
 
 export default function Navbar({
   totalItems,
+  currentUser,
   onCartClick,
   onToggleMobileMenu,
   onNavClick,
+  onOpenAuthModal,
+  onOpenSpecialistDashboard,
+  onOpenClientHistory,
+  onLogout,
 }: NavbarProps) {
   const [scrolled, setScrolled] = useState(false);
 
@@ -24,6 +35,9 @@ export default function Navbar({
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
+
+  const isEspecialista =
+    currentUser?.rol === "ESPECIALISTA" || currentUser?.rol === "ESTILISTA";
 
   return (
     <nav
@@ -68,8 +82,48 @@ export default function Navbar({
         })}
       </ul>
 
-      {/* ACCIONES (CARRITO & BOTÓN RESERVA) */}
-      <div className="flex items-center gap-4">
+      {/* ACCIONES (AUTENTICACIÓN, CARRITO & BOTÓN RESERVA) */}
+      <div className="flex items-center gap-3">
+        {/* BOTÓN O PERFIL DE USUARIO */}
+        {currentUser ? (
+          <div className="flex items-center gap-2">
+            {isEspecialista ? (
+              <button
+                onClick={onOpenSpecialistDashboard}
+                className="px-3.5 py-1.5 bg-charcoal text-white hover:bg-charcoal/90 rounded-full font-bold text-xs flex items-center gap-1.5 shadow-sm border border-gold/40 transition-colors"
+                title="Abrir panel de especialista"
+              >
+                <span>📅</span>
+                <span className="hidden sm:inline">Panel Especialista</span>
+              </button>
+            ) : (
+              <button
+                onClick={onOpenClientHistory}
+                className="px-3.5 py-1.5 bg-white text-charcoal hover:bg-bone border border-gold/40 rounded-full font-bold text-xs flex items-center gap-1.5 shadow-sm transition-colors"
+                title="Ver mis reservas e historial"
+              >
+                <span>👤</span>
+                <span className="hidden sm:inline">{currentUser.nombre_completo.split(" ")[0]}</span>
+              </button>
+            )}
+
+            <button
+              onClick={onLogout}
+              className="p-1.5 text-charcoal/60 hover:text-rust text-xs font-semibold"
+              title="Cerrar sesión"
+            >
+              Salir
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => onOpenAuthModal("login")}
+            className="text-xs font-bold text-charcoal hover:text-rust px-3 py-1.5 rounded-full border border-charcoal/20 hover:border-rust transition-all"
+          >
+            Acceder
+          </button>
+        )}
+
         {/* BOTÓN RESERVAR DIRECTO */}
         <button
           onClick={() => onNavClick("reservar")}
@@ -81,7 +135,7 @@ export default function Navbar({
         {/* BOTÓN CARRITO */}
         <button
           onClick={onCartClick}
-          className="icon-btn p-2.5 rounded-full hover:bg-gold/20 transition-colors"
+          className="icon-btn p-2.5 rounded-full hover:bg-gold/20 transition-colors relative"
           aria-label="Abrir Carrito"
         >
           <svg
