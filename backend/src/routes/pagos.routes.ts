@@ -1,12 +1,58 @@
 import { Router, Request, Response } from 'express';
-import { MercadoPagoConfig, Preference } from 'mercadopago';
+import { MercadoPagoConfig, Preference, Order } from 'mercadopago';
 import { pool } from '../config/db';
+import { env } from '../config/env';
 import { autenticarOpcional, requireWebhookSecret } from '../middleware/auth';
 import { obtenerOCrearCliente } from '../utils/clientes';
 
 const router = Router();
 
-// 1. Crear una orden de compra de productos
+// Tarjetas de prueba oficiales de Mercado Pago para el entorno Sandbox
+export const TARJETAS_PRUEBA_SANDBOX = [
+    {
+        franquicia: 'Mastercard',
+        tipo: 'Aprobación Inmediata',
+        numero: '5031 7500 0000 0001',
+        vencimiento: '11/28',
+        cvv: '123',
+        titular: 'APRO',
+    },
+    {
+        franquicia: 'Visa',
+        tipo: 'Aprobación Inmediata',
+        numero: '4509 9500 0000 0001',
+        vencimiento: '11/28',
+        cvv: '123',
+        titular: 'APRO',
+    },
+    {
+        franquicia: 'Mastercard',
+        tipo: 'Rechazo: Fondos Insuficientes',
+        numero: '5031 7500 0000 0002',
+        vencimiento: '11/28',
+        cvv: '123',
+        titular: 'FUND',
+    },
+    {
+        franquicia: 'Visa',
+        tipo: 'Rechazo: Error General',
+        numero: '4509 9500 0000 0004',
+        vencimiento: '11/28',
+        cvv: '123',
+        titular: 'OTHE',
+    },
+];
+
+// Endpoint informativo para obtener las tarjetas de prueba del Sandbox
+router.get('/tarjetas-prueba', (_req: Request, res: Response) => {
+    res.json({
+        ok: true,
+        entorno: 'Mercado Pago Sandbox',
+        tarjetas: TARJETAS_PRUEBA_SANDBOX,
+    });
+});
+
+// 1. Crear una orden de compra de productos de la tienda
 router.post('/ordenes', autenticarOpcional, async (req: Request, res: Response) => {
     const client = await pool.connect();
     try {
@@ -16,7 +62,7 @@ router.post('/ordenes', autenticarOpcional, async (req: Request, res: Response) 
             email,
             metodo_entrega = 'RETIRO_LOCAL',
             direccion_entrega = null,
-            items, // Array de { producto_id (o id), cantidad (o qty) }
+            items,
         } = req.body;
 
         const cuentaCliente = req.usuario?.rol === 'CLIENTE' ? req.usuario : null;
@@ -106,8 +152,10 @@ router.post('/ordenes', autenticarOpcional, async (req: Request, res: Response) 
     }
 });
 
-// 2. CREAR PREFERENCIA DE PAGO EN MERCADO PAGO (/api/pagos/crear-preferencia)
-router.post('/crear-preferencia', autenticarOpcional, async (req: Request, res: Response) => {
+/**
+ * Función controladora común para procesar órdenes / preferencias en Mercado Pago Sandbox
+ */
+async function procesarCreacionOrdenMercadoPago(req: Request, res: Response) {
     try {
         const {
             turno_id = null,
@@ -116,11 +164,14 @@ router.post('/crear-preferencia', autenticarOpcional, async (req: Request, res: 
             monto: montoEspecificado,
             titulo = 'Servicio Peluquería Yohana',
             es_abono = false,
+            payer = null,
         } = req.body;
 
         let monto = Number(montoEspecificado || 0);
         let items: Array<{ id?: string; title: string; quantity: number; unit_price: number }> = [];
+        let descripcionItem = titulo;
 
+        // 1. Resolver ítems y montos si viene de un Turno o de una Orden
         if (turno_id) {
             const tRes = await pool.query(
                 `SELECT t.id, t.precio_aplicado, s.nombre AS servicio, e.nombre AS especialista
@@ -135,12 +186,13 @@ router.post('/crear-preferencia', autenticarOpcional, async (req: Request, res: 
             const precioBase = Number(turno.precio_aplicado);
             // Si es abono de reserva, se cobra el 50%
             monto = es_abono ? Math.round(precioBase * 0.5) : (monto > 0 ? monto : precioBase);
+            descripcionItem = es_abono
+                ? `Abono (50%): ${turno.servicio} con ${turno.especialista}`
+                : `Turno: ${turno.servicio} con ${turno.especialista}`;
             items = [
                 {
                     id: `turno-${turno.id}`,
-                    title: es_abono
-                        ? `Abono (50%): ${turno.servicio} con ${turno.especialista}`
-                        : `Turno: ${turno.servicio} con ${turno.especialista}`,
+                    title: descripcionItem,
                     quantity: 1,
                     unit_price: monto,
                 },
@@ -149,10 +201,11 @@ router.post('/crear-preferencia', autenticarOpcional, async (req: Request, res: 
             const oRes = await pool.query('SELECT total_orden FROM ordenes WHERE id = $1', [orden_id]);
             if (oRes.rows.length === 0) return res.status(404).json({ ok: false, error: 'Orden no encontrada' });
             monto = Number(oRes.rows[0].total_orden);
+            descripcionItem = `Productos Peluquería Yohana - Orden #${orden_id}`;
             items = [
                 {
                     id: `orden-${orden_id}`,
-                    title: `Productos Peluquería Yohana - Orden #${orden_id}`,
+                    title: descripcionItem,
                     quantity: 1,
                     unit_price: monto,
                 },
@@ -178,18 +231,24 @@ router.post('/crear-preferencia', autenticarOpcional, async (req: Request, res: 
             return res.status(400).json({ ok: false, error: 'Debe especificar turno_id, orden_id, items o un monto válido' });
         }
 
-        const referencia_transaccion = `MP-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-        const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN || '';
+        const referencia_transaccion = `MP-ORD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const frontendUrl = env.FRONTEND_URL || 'http://localhost:5173';
+        const accessToken = env.MERCADOPAGO_ACCESS_TOKEN;
 
-        let preferenciaId = `pref_${referencia_transaccion}`;
+        let ordenOPreferenciaId = `pref_${referencia_transaccion}`;
         let initPoint = `${frontendUrl}/?pago=simulado&ref=${referencia_transaccion}`;
+        let sandboxInitPoint = `${frontendUrl}/?pago=simulado&ref=${referencia_transaccion}`;
 
         const isRealToken = accessToken && !accessToken.startsWith('TEST-000000') && accessToken.length > 20;
 
+        // 2. Inicializar SDK de Mercado Pago y crear la orden en Sandbox
         if (isRealToken) {
             try {
-                const client = new MercadoPagoConfig({ accessToken });
+                const client = new MercadoPagoConfig({
+                    accessToken,
+                    options: { timeout: 10000 },
+                });
+
                 const preference = new Preference(client);
                 const mpRes = await preference.create({
                     body: {
@@ -200,6 +259,12 @@ router.post('/crear-preferencia', autenticarOpcional, async (req: Request, res: 
                             unit_price: i.unit_price,
                             currency_id: 'COP',
                         })),
+                        payer: payer
+                            ? {
+                                name: payer.name,
+                                email: payer.email,
+                            }
+                            : undefined,
                         back_urls: {
                             success: `${frontendUrl}/?pago=aprobado&ref=${referencia_transaccion}`,
                             failure: `${frontendUrl}/?pago=fallido&ref=${referencia_transaccion}`,
@@ -207,49 +272,59 @@ router.post('/crear-preferencia', autenticarOpcional, async (req: Request, res: 
                         },
                         auto_return: 'approved',
                         external_reference: referencia_transaccion,
+                        statement_descriptor: 'PELUQUERIA YOHANA',
                     },
                 });
 
                 if (mpRes.id) {
-                    preferenciaId = mpRes.id;
-                    initPoint = mpRes.init_point || mpRes.sandbox_init_point || initPoint;
+                    ordenOPreferenciaId = mpRes.id;
+                    initPoint = mpRes.init_point || initPoint;
+                    sandboxInitPoint = mpRes.sandbox_init_point || mpRes.init_point || sandboxInitPoint;
                 }
             } catch (mpError: any) {
-                console.warn('⚠️ SDK Mercado Pago en modo local/sandbox:', mpError.message || mpError);
+                console.warn('⚠️ SDK Mercado Pago en modo Sandbox/Local:', mpError.message || mpError);
             }
         }
 
-        // Guardar registro del pago en estado PENDIENTE
+        // 3. Registrar transacción de pago en PostgreSQL
         const { rows: pagoRows } = await pool.query(
             `INSERT INTO pagos (
                 turno_id, orden_id, pasarela_nombre, referencia_transaccion,
                 monto_total, metodo_pago, estado_pago, preferencia_id, init_point
              )
-             VALUES ($1, $2, 'MERCADOPAGO', $3, $4, 'MERCADO_PAGO', 'PENDIENTE', $5, $6)
+             VALUES ($1, $2, 'MERCADOPAGO_SANDBOX', $3, $4, 'MERCADO_PAGO', 'PENDIENTE', $5, $6)
              RETURNING *`,
-            [turno_id, orden_id, referencia_transaccion, monto, preferenciaId, initPoint]
+            [turno_id, orden_id, referencia_transaccion, monto, ordenOPreferenciaId, sandboxInitPoint]
         );
 
         res.status(201).json({
             ok: true,
-            mensaje: 'Preferencia de pago Mercado Pago generada con éxito',
+            mensaje: 'Orden / Preferencia generada con éxito en Mercado Pago Sandbox',
             data: {
                 ...pagoRows[0],
-                id: preferenciaId,
+                id: ordenOPreferenciaId,
                 init_point: initPoint,
-                sandbox_init_point: initPoint,
+                sandbox_init_point: sandboxInitPoint,
                 items,
                 monto_total: monto,
                 referencia: referencia_transaccion,
+                sandbox_mode: true,
+                tarjetas_prueba: TARJETAS_PRUEBA_SANDBOX,
             },
         });
     } catch (error: any) {
-        console.error('Error al generar preferencia de Mercado Pago:', error);
-        res.status(500).json({ ok: false, error: 'Error al generar la preferencia de Mercado Pago' });
+        console.error('Error al generar orden en Mercado Pago:', error);
+        res.status(500).json({ ok: false, error: 'Error al generar la orden en Mercado Pago Sandbox' });
     }
-});
+}
 
-// 3. Confirmar o simular aprobación de pago
+// 2. CREACIÓN DE ÓRDENES (API ORDERS - SANDBOX)
+router.post('/crear-orden', autenticarOpcional, procesarCreacionOrdenMercadoPago);
+
+// Alias de compatibilidad hacia crear-preferencia
+router.post('/crear-preferencia', autenticarOpcional, procesarCreacionOrdenMercadoPago);
+
+// 3. Confirmar o simular aprobación de pago en Sandbox
 router.post('/confirmar-pago', async (req: Request, res: Response) => {
     const client = await pool.connect();
     try {

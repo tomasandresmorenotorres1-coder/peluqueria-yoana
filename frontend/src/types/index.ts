@@ -135,10 +135,21 @@ export type CitaEspecialista = {
   notas_accesibilidad?: string;
 };
 
+export type TarjetaPruebaSandbox = {
+  franquicia: string;
+  tipo: string;
+  numero: string;
+  vencimiento: string;
+  cvv: string;
+  titular: string;
+};
+
 export type PreferenciaPagoResponse = {
   id: string;
   init_point: string;
   sandbox_init_point?: string;
   monto_total: number;
   referencia: string;
+  sandbox_mode?: boolean;
+  tarjetas_prueba?: TarjetaPruebaSandbox[];
 };

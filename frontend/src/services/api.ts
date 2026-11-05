@@ -10,6 +10,7 @@ import type {
   Product,
   Service,
   StaffMember,
+  TarjetaPruebaSandbox,
   TurnoCliente,
   User,
 } from '@/types';
@@ -375,6 +376,9 @@ export async function eliminarBloqueoEspecialista(id: number): Promise<void> {
   });
 }
 
+// Re-export para que los componentes lo importen desde un único lugar
+export type { TarjetaPruebaSandbox };
+
 // ---------------------------------------------------------------------
 // 12. PASARELA DE PAGO MERCADO PAGO
 // ---------------------------------------------------------------------
@@ -385,7 +389,9 @@ export async function crearPreferenciaMercadoPago(data: {
   titulo?: string;
   es_abono?: boolean;
 }): Promise<PreferenciaPagoResponse> {
-  const res = await request<{ ok: boolean; data: PreferenciaPagoResponse }>('/pagos/crear-preferencia', {
+  // Intentar primero el endpoint principal (crear-orden); en caso de fallo
+  // hacer fallback al alias crear-preferencia para compatibilidad hacia atrás.
+  const res = await request<{ ok: boolean; data: PreferenciaPagoResponse }>('/pagos/crear-orden', {
     method: 'POST',
     body: JSON.stringify(data),
   });

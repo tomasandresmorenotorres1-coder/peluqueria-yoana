@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
-import type { Service, StaffMember, User, PreferenciaPagoResponse } from "@/types";
+import type { Service, StaffMember, User, PreferenciaPagoResponse, TarjetaPruebaSandbox } from "@/types";
 import { TIMES } from "@/data/constants";
 import { crearPreferenciaMercadoPago, confirmarPagoSimulado } from "@/services/api";
-
 type BookingSectionProps = {
   services: Service[];
   staff: StaffMember[];
@@ -301,7 +300,7 @@ export default function BookingSection({
                             Monto a abonar/pagar: <strong>${Number(preferenciaMP.monto_total).toLocaleString("es-CO")}</strong>
                           </p>
                           <a
-                            href={preferenciaMP.init_point}
+                            href={preferenciaMP.sandbox_init_point || preferenciaMP.init_point}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="btn bg-[#009EE3] text-white hover:bg-[#007EB5] w-full py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all"
@@ -309,6 +308,30 @@ export default function BookingSection({
                             <span>Pagar con Mercado Pago</span>
                             <span>↗</span>
                           </a>
+
+                          {/* TARJETAS DE PRUEBA SANDBOX (solo si el backend indica sandbox_mode) */}
+                          {preferenciaMP.sandbox_mode && preferenciaMP.tarjetas_prueba && preferenciaMP.tarjetas_prueba.length > 0 && (
+                            <details className="bg-white border border-charcoal/15 rounded-xl overflow-hidden">
+                              <summary className="cursor-pointer px-3 py-2 text-[10px] font-bold text-charcoal/60 uppercase tracking-wider hover:bg-gray-50 transition-colors select-none">
+                                🧪 Tarjetas de Prueba Sandbox
+                              </summary>
+                              <div className="divide-y divide-charcoal/8 px-3 pb-2">
+                                {preferenciaMP.tarjetas_prueba.map((t: TarjetaPruebaSandbox, i: number) => (
+                                  <div key={i} className="py-2">
+                                    <p className="text-[10px] font-bold text-charcoal/80 flex items-center gap-1">
+                                      <span className={t.tipo.includes("Rechazo") ? "text-red-500" : "text-emerald-600"}>
+                                        {t.tipo.includes("Rechazo") ? "✗" : "✓"}
+                                      </span>
+                                      {t.franquicia} — {t.tipo}
+                                    </p>
+                                    <p className="text-[10px] font-mono text-charcoal/70 mt-0.5">
+                                      {t.numero} · Venc: {t.vencimiento} · CVV: {t.cvv} · Nombre: {t.titular}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
 
                           <button
                             type="button"
