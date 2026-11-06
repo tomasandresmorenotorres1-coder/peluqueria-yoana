@@ -10,6 +10,17 @@ export const obtenerTransporter = (): Transporter | null => {
     }
 
     try {
+        const isGmail = env.SMTP_HOST.includes('gmail');
+        if (isGmail) {
+            return nodemailer.createTransport({
+                service: 'gmail',
+                auth: {
+                    user: env.SMTP_USER,
+                    pass: env.SMTP_PASS,
+                },
+            });
+        }
+
         const isSecure = env.SMTP_PORT === 465;
         return nodemailer.createTransport({
             host: env.SMTP_HOST,

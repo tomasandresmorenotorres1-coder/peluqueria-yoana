@@ -52,8 +52,8 @@ export const env = {
     MERCADOPAGO_ACCESS_TOKEN: process.env.MERCADOPAGO_ACCESS_TOKEN || '',
     SMTP_HOST: process.env.SMTP_HOST || 'smtp.gmail.com',
     SMTP_PORT: Number(process.env.SMTP_PORT) || 587,
-    SMTP_USER: process.env.SMTP_USER || '',
-    SMTP_PASS: process.env.SMTP_PASS || '',
-    SMTP_FROM: process.env.SMTP_FROM || 'Peluquería Yohana <notificaciones@peluqueriayoana.com>',
+    SMTP_USER: (process.env.SMTP_USER || '').trim(),
+    SMTP_PASS: (process.env.SMTP_PASS || '').trim(),
+    SMTP_FROM: (process.env.SMTP_FROM || 'Peluquería Yohana <notificaciones@peluqueriayoana.com>').replace(/^"|"$/g, '').trim(),
     FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:5173',
 };
