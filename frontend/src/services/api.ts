@@ -1,4 +1,7 @@
 import type {
+  AdminResena,
+  AdminTurno,
+  AdminUsuario,
   BookingRequest,
   CitaEspecialista,
   Comment,
@@ -403,4 +406,145 @@ export async function confirmarPagoSimulado(referencia: string): Promise<void> {
     method: 'POST',
     body: JSON.stringify({ referencia_transaccion: referencia, estado: 'APROBADO' }),
   });
+}
+
+// ---------------------------------------------------------------------
+// 13. MÓDULO ADMINISTRADOR (/api/admin)
+// ---------------------------------------------------------------------
+
+export async function fetchAdminTurnos(filtros?: {
+  fecha?: string;
+  estado?: string;
+  equipo_id?: number;
+}): Promise<AdminTurno[]> {
+  const params = new URLSearchParams();
+  if (filtros?.fecha) params.append('fecha', filtros.fecha);
+  if (filtros?.estado) params.append('estado', filtros.estado);
+  if (filtros?.equipo_id) params.append('equipo_id', filtros.equipo_id.toString());
+  const query = params.toString() ? `?${params.toString()}` : '';
+  const res = await request<{ ok: boolean; data: AdminTurno[] }>(`/admin/turnos${query}`);
+  return res.data;
+}
+
+export async function cambiarEstadoTurnoAdmin(
+  id: number,
+  estado: 'PENDIENTE' | 'CONFIRMADO' | 'COMPLETADO' | 'CANCELADO'
+): Promise<void> {
+  await request<{ ok: boolean }>(`/admin/turnos/${id}/estado`, {
+    method: 'PATCH',
+    body: JSON.stringify({ estado }),
+  });
+}
+
+export async function fetchAdminUsuarios(rol?: string): Promise<AdminUsuario[]> {
+  const query = rol ? `?rol=${encodeURIComponent(rol)}` : '';
+  const res = await request<{ ok: boolean; data: AdminUsuario[] }>(`/admin/usuarios${query}`);
+  return res.data;
+}
+
+export async function crearAdminUsuario(datos: {
+  nombre_completo: string;
+  email: string;
+  password: string;
+  rol: 'ADMIN' | 'ESTILISTA' | 'CLIENTE';
+  equipo_id?: number;
+  telefono_whatsapp?: string;
+}): Promise<AdminUsuario> {
+  const res = await request<{ ok: boolean; data: AdminUsuario }>('/admin/usuarios', {
+    method: 'POST',
+    body: JSON.stringify(datos),
+  });
+  return res.data;
+}
+
+export async function actualizarAdminUsuario(
+  id: number,
+  datos: { activo?: boolean; nombre_completo?: string; nueva_password?: string }
+): Promise<AdminUsuario> {
+  const res = await request<{ ok: boolean; data: AdminUsuario }>(`/admin/usuarios/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(datos),
+  });
+  return res.data;
+}
+
+export async function crearAdminServicio(datos: {
+  categoria_id: number;
+  nombre: string;
+  descripcion: string;
+  precio_actual: number;
+  duracion_minutos: number;
+  texto_alternativo: string;
+  icono?: string;
+  genero?: string;
+}): Promise<any> {
+  const res = await request<{ ok: boolean; data: any }>('/admin/servicios', {
+    method: 'POST',
+    body: JSON.stringify(datos),
+  });
+  return res.data;
+}
+
+export async function editarAdminServicio(id: number, datos: Record<string, any>): Promise<any> {
+  const res = await request<{ ok: boolean; data: any }>(`/admin/servicios/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(datos),
+  });
+  return res.data;
+}
+
+export async function cambiarActivoServicio(id: number, activo: boolean): Promise<any> {
+  const res = await request<{ ok: boolean; data: any }>(`/admin/servicios/${id}/activo`, {
+    method: 'PATCH',
+    body: JSON.stringify({ activo }),
+  });
+  return res.data;
+}
+
+export async function crearAdminProducto(datos: {
+  categoria_id: number;
+  nombre: string;
+  precio_actual: number;
+  imagen_url: string;
+  texto_alternativo: string;
+  marca?: string;
+  descripcion?: string;
+  stock?: number;
+  etiqueta?: string;
+  genero?: string;
+}): Promise<any> {
+  const res = await request<{ ok: boolean; data: any }>('/admin/productos', {
+    method: 'POST',
+    body: JSON.stringify(datos),
+  });
+  return res.data;
+}
+
+export async function editarAdminProducto(id: number, datos: Record<string, any>): Promise<any> {
+  const res = await request<{ ok: boolean; data: any }>(`/admin/productos/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(datos),
+  });
+  return res.data;
+}
+
+export async function cambiarActivoProducto(id: number, activo: boolean): Promise<any> {
+  const res = await request<{ ok: boolean; data: any }>(`/admin/productos/${id}/activo`, {
+    method: 'PATCH',
+    body: JSON.stringify({ activo }),
+  });
+  return res.data;
+}
+
+export async function fetchAdminResenas(): Promise<AdminResena[]> {
+  const res = await request<{ ok: boolean; data: AdminResena[] }>('/admin/resenas');
+  return res.data;
+}
+
+export async function cambiarAprobacionResena(id: number, aprobada: boolean): Promise<any> {
+  const res = await request<{ ok: boolean; data: any }>(`/admin/resenas/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ aprobada }),
+  });
+  return res.data;
 }

@@ -16,6 +16,7 @@ import AuthModal from "@/components/AuthModal";
 import PromoRegisterModal from "@/components/PromoRegisterModal";
 import ClientHistoryModal from "@/components/ClientHistoryModal";
 import SpecialistDashboard from "@/components/SpecialistDashboard";
+import AdminDashboard from "@/components/AdminDashboard";
 import Chatbot from "@/components/Chatbot";
 
 import {
@@ -54,6 +55,7 @@ export default function App() {
   const [authModalMode, setAuthModalMode] = useState<"login" | "register">("login");
   const [clientHistoryOpen, setClientHistoryOpen] = useState(false);
   const [specialistDashboardOpen, setSpecialistDashboardOpen] = useState(false);
+  const [adminDashboardOpen, setAdminDashboardOpen] = useState(false);
   const [promoRegisterOpen, setPromoRegisterOpen] = useState(false);
 
   // Datos dinámicos
@@ -112,8 +114,10 @@ export default function App() {
         const user = await fetchMiPerfil();
         if (isMounted && user) {
           setCurrentUser(user);
-          // Si el usuario es especialista, redirigir automáticamente a su panel (Req 1)
-          if (user.rol === "ESPECIALISTA" || user.rol === "ESTILISTA") {
+          // Redirigir automáticamente según el rol
+          if (user.rol === "ADMIN") {
+            setAdminDashboardOpen(true);
+          } else if (user.rol === "ESPECIALISTA" || user.rol === "ESTILISTA") {
             setSpecialistDashboardOpen(true);
           }
         }
@@ -208,17 +212,23 @@ export default function App() {
     setCurrentUser(user);
     setToastMessage(`¡Bienvenido, ${user.nombre_completo}!`);
 
-    // Redirección según rol (Req 1)
-    if (user.rol === "ESPECIALISTA" || user.rol === "ESTILISTA") {
+    // Redirección según rol
+    if (user.rol === "ADMIN") {
+      setAdminDashboardOpen(true);
+      setSpecialistDashboardOpen(false);
+    } else if (user.rol === "ESPECIALISTA" || user.rol === "ESTILISTA") {
       setSpecialistDashboardOpen(true);
+      setAdminDashboardOpen(false);
     } else {
       setSpecialistDashboardOpen(false);
+      setAdminDashboardOpen(false);
     }
   };
 
   const handleLogout = () => {
     cerrarSesion();
     setCurrentUser(null);
+    setAdminDashboardOpen(false);
     setSpecialistDashboardOpen(false);
     setClientHistoryOpen(false);
     setToastMessage("Sesión cerrada correctamente.");
@@ -229,13 +239,24 @@ export default function App() {
   const totalPrice = cart.reduce((s, i) => s + i.price * i.qty, 0);
 
   function addToCart(product: Product) {
+    let alcanzadoMax = false;
     setCart((prev) => {
       const existing = prev.find((i) => i.id === product.id);
-      if (existing) return prev.map((i) => (i.id === product.id ? { ...i, qty: i.qty + 1 } : i));
-      return [...prev, { id: product.id, name: product.name, price: product.price, qty: 1 }];
+      if (existing) {
+        if (product.stock !== undefined && existing.qty >= product.stock) {
+          alcanzadoMax = true;
+          return prev;
+        }
+        return prev.map((i) => (i.id === product.id ? { ...i, qty: i.qty + 1 } : i));
+      }
+      return [...prev, { id: product.id, name: product.name, price: product.price, qty: 1, stock: product.stock }];
     });
 
-    setToastMessage(`✓ ${product.name} agregado al carrito`);
+    if (alcanzadoMax) {
+      setToastMessage(`⚠️ Stock máximo alcanzado para ${product.name}`);
+    } else {
+      setToastMessage(`✓ ${product.name} agregado al carrito`);
+    }
     setTimeout(() => {
       setToastMessage((cur) => (cur?.includes(product.name) ? null : cur));
     }, 2500);
@@ -243,6 +264,18 @@ export default function App() {
 
   function removeFromCart(id: number) {
     setCart((prev) => prev.filter((i) => i.id !== id));
+  }
+
+  /** Cambia la cantidad de un ítem respetando límite mínimo de 1 y stock máximo */
+  function updateCartQty(id: number, qty: number) {
+    if (qty < 1) return;
+    setCart((prev) =>
+      prev.map((i) => {
+        if (i.id !== id) return i;
+        const finalQty = i.stock !== undefined ? Math.min(qty, i.stock) : qty;
+        return { ...i, qty: finalQty };
+      })
+    );
   }
 
   // Realizar reserva de turno
@@ -347,6 +380,17 @@ export default function App() {
     setCommentSent(false);
   }
 
+  // Si el administrador tiene su panel abierto, mostrar la vista del panel de administración
+  if (adminDashboardOpen && currentUser && currentUser.rol === "ADMIN") {
+    return (
+      <AdminDashboard
+        user={currentUser}
+        onLogout={handleLogout}
+        onGoHome={() => setAdminDashboardOpen(false)}
+      />
+    );
+  }
+
   // Si el especialista tiene su panel abierto, mostrar la vista del panel de especialista
   if (specialistDashboardOpen && currentUser && (currentUser.rol === "ESPECIALISTA" || currentUser.rol === "ESTILISTA")) {
     return (
@@ -385,6 +429,7 @@ export default function App() {
           setAuthModalOpen(true);
         }}
         onOpenSpecialistDashboard={() => setSpecialistDashboardOpen(true)}
+        onOpenAdminDashboard={() => setAdminDashboardOpen(true)}
         onOpenClientHistory={() => setClientHistoryOpen(true)}
         onLogout={handleLogout}
       />
@@ -489,6 +534,7 @@ export default function App() {
         submitting={submittingOrder}
         onClose={() => setCartOpen(false)}
         onRemove={removeFromCart}
+        onUpdateQty={updateCartQty}
         onCheckout={handleCheckout}
       />
 

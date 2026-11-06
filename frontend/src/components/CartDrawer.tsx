@@ -8,6 +8,8 @@ type CartDrawerProps = {
   submitting?: boolean;
   onClose: () => void;
   onRemove: (id: number) => void;
+  /** Actualiza la cantidad de un ítem; si qty <= 0 lo elimina */
+  onUpdateQty: (id: number, qty: number) => void;
   onCheckout: (data: OrderRequest) => Promise<boolean>;
 };
 
@@ -18,6 +20,7 @@ export default function CartDrawer({
   submitting,
   onClose,
   onRemove,
+  onUpdateQty,
   onCheckout,
 }: CartDrawerProps) {
   const [checkoutStep, setCheckoutStep] = useState<"cart" | "form" | "success">("cart");
@@ -179,23 +182,89 @@ export default function CartDrawer({
         ) : (
           <>
             <div className="flex-1 overflow-auto p-6 space-y-4">
-              {cart.map((item) => (
-                <div key={item.id} className="list-item">
-                  <div className="flex-1">
-                    <p className="font-medium text-sm">{item.name}</p>
-                    <p className="price text-sm font-normal">
-                      ${item.price.toLocaleString("es-CO")} × {item.qty}
+              {cart.map((item) => {
+                const subtotal = item.price * item.qty;
+                const atStockLimit = item.stock !== undefined && item.qty >= item.stock;
+                const atMinLimit = item.qty <= 1;
+
+                return (
+                  <div key={item.id} className="list-item flex-col gap-2">
+                    {/* Fila superior: nombre + botón eliminar con icono papelera */}
+                    <div className="flex items-start justify-between w-full gap-2">
+                      <p className="font-medium text-sm leading-tight flex-1">{item.name}</p>
+                      <button
+                        type="button"
+                        onClick={() => onRemove(item.id)}
+                        className="text-charcoal/40 hover:text-rust p-1.5 rounded-lg hover:bg-rust/10 transition-colors shrink-0"
+                        aria-label={`Eliminar ${item.name} del carrito`}
+                        title={`Eliminar ${item.name} del carrito`}
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          className="w-4 h-4"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                          strokeWidth={1.8}
+                          aria-hidden="true"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                          />
+                        </svg>
+                      </button>
+                    </div>
+
+                    {/* Fila inferior: controles de cantidad (+/-) + subtotal */}
+                    <div className="flex items-center justify-between w-full gap-3">
+                      {/* Selector de cantidad compacto */}
+                      <div className="flex items-center gap-1 bg-charcoal/5 rounded-lg p-0.5 border border-charcoal/10">
+                        <button
+                          type="button"
+                          onClick={() => onUpdateQty(item.id, item.qty - 1)}
+                          disabled={atMinLimit}
+                          className="w-7 h-7 flex items-center justify-center rounded-md text-charcoal hover:bg-rust hover:text-white transition-colors font-bold text-base disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-charcoal"
+                          aria-label={`Disminuir cantidad de ${item.name}`}
+                          title={atMinLimit ? "La cantidad mínima es 1 (usa la papelera para eliminar)" : undefined}
+                        >
+                          −
+                        </button>
+                        <span
+                          className="w-7 text-center text-sm font-semibold tabular-nums select-none"
+                          aria-label={`Cantidad: ${item.qty}`}
+                        >
+                          {item.qty}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => onUpdateQty(item.id, item.qty + 1)}
+                          disabled={atStockLimit}
+                          className="w-7 h-7 flex items-center justify-center rounded-md text-charcoal hover:bg-rust hover:text-white transition-colors font-bold text-base disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-charcoal"
+                          aria-label={`Aumentar cantidad de ${item.name}`}
+                          title={atStockLimit ? `Stock máximo alcanzado (${item.stock} disponibles)` : undefined}
+                        >
+                          +
+                        </button>
+                      </div>
+
+                      {/* Subtotal dinámico de la línea */}
+                      <p className="price text-sm font-semibold">
+                        ${subtotal.toLocaleString("es-CO")}
+                      </p>
+                    </div>
+
+                    {/* Precio unitario y aviso de stock */}
+                    <p className="text-xs text-charcoal/50 w-full flex items-center justify-between">
+                      <span>${item.price.toLocaleString("es-CO")} c/u</span>
+                      {atStockLimit && (
+                        <span className="text-rust font-medium">Stock máx. alcanzado</span>
+                      )}
                     </p>
                   </div>
-                  <button
-                    onClick={() => onRemove(item.id)}
-                    className="text-charcoal/40 hover:text-rust transition-colors text-lg"
-                    title="Eliminar producto"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
             <div className="drawer-footer">
               <div className="flex justify-between mb-4 text-lg font-bold">

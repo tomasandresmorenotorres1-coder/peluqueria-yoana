@@ -41,6 +41,8 @@ export type CartItem = {
   name: string;
   price: number;
   qty: number;
+  /** Stock disponible del producto (para limitar el botón +) */
+  stock?: number;
 };
 
 export type StaffMember = {
@@ -152,4 +154,43 @@ export type PreferenciaPagoResponse = {
   referencia: string;
   sandbox_mode?: boolean;
   tarjetas_prueba?: TarjetaPruebaSandbox[];
+};
+
+export type AdminUsuario = {
+  id: number;
+  email: string;
+  nombre_completo: string;
+  rol: Rol;
+  activo: boolean;
+  equipo_id?: number | null;
+  estilista?: string | null;
+  cliente_id?: number | null;
+  ultimo_acceso?: string | null;
+  creado_en?: string;
+};
+
+export type AdminTurno = {
+  id: number;
+  fecha: string;
+  hora_inicio: string;
+  hora_fin: string;
+  estado: "PENDIENTE" | "CONFIRMADO" | "COMPLETADO" | "CANCELADO";
+  precio_aplicado: number;
+  servicio: string;
+  estilista: string;
+  cliente: string;
+  telefono_whatsapp: string;
+  requiere_apoyo_accesibilidad?: boolean;
+  tipo_apoyo?: string;
+  notas_accesibilidad?: string;
+};
+
+export type AdminResena = {
+  id: number;
+  cliente_nombre: string;
+  servicio_id?: number;
+  calificacion: number;
+  comentario: string;
+  aprobada: boolean;
+  creado_en: string;
 };

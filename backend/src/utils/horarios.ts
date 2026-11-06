@@ -62,7 +62,25 @@ export const ahoraEnColombia = (): { fecha: string; minutos: number } => {
         minutos: Number(valor('hour')) * 60 + Number(valor('minute')),
     };
 };
+export const obtenerDisponibilidad = async (db: Db, equipoId: number, fecha: string, duracionServicioMin: number) => {
+    // 1. Obtener jornada y ocupaciones
+    const jornada = await obtenerJornada(db, equipoId, fecha);
+    const ocupaciones = await obtenerOcupaciones(db, equipoId, fecha);
 
+    const horasDisponibles = [];
+
+    // 2. Iterar sobre tu grilla de horas
+    for (const hora of HORAS_DE_LA_GRILLA) {
+        // AQUÍ ES DONDE SUCEDE LA MAGIA. Le pasas la duración real del servicio.
+        const motivo = motivoNoDisponible(fecha, hora, duracionServicioMin, jornada, ocupaciones);
+
+        if (motivo === null) {
+            horasDisponibles.push(hora); // Está libre
+        }
+    }
+
+    return horasDisponibles;
+};
 /**
  * Jornada del especialista ese día, o null si no trabaja.
  * - Si el especialista configuró horarios, solo trabaja los días que tiene configurados.

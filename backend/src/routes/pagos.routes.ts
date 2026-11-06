@@ -95,7 +95,8 @@ router.post('/ordenes', autenticarOpcional, async (req: Request, res: Response) 
                 [productoId]
             );
 
-            if (!Number.isInteger(cantidad) || cantidad <= 0) {
+
+            if (!Number.isInteger(cantidad) || Number(cantidad) <= 0) {
                 throw new Error('La cantidad de cada producto debe ser un número entero mayor a 0');
             }
 

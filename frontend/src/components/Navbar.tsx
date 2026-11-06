@@ -11,6 +11,7 @@ type NavbarProps = {
   onNavClick: (id: string) => void;
   onOpenAuthModal: (mode?: "login" | "register") => void;
   onOpenSpecialistDashboard: () => void;
+  onOpenAdminDashboard: () => void;
   onOpenClientHistory: () => void;
   onLogout: () => void;
 };
@@ -23,6 +24,7 @@ export default function Navbar({
   onNavClick,
   onOpenAuthModal,
   onOpenSpecialistDashboard,
+  onOpenAdminDashboard,
   onOpenClientHistory,
   onLogout,
 }: NavbarProps) {
@@ -36,16 +38,16 @@ export default function Navbar({
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
+  const isAdmin = currentUser?.rol === "ADMIN";
   const isEspecialista =
     currentUser?.rol === "ESPECIALISTA" || currentUser?.rol === "ESTILISTA";
 
   return (
     <nav
-      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 px-6 py-4 flex items-center justify-between ${
-        scrolled
+      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 px-6 py-4 flex items-center justify-between ${scrolled
           ? "bg-cream/95 backdrop-blur-md shadow-md border-b border-gold/40 py-3"
           : "bg-cream/80 backdrop-blur-sm border-b border-gold/20"
-      }`}
+        }`}
     >
       {/* LOGO */}
       <div
@@ -87,7 +89,16 @@ export default function Navbar({
         {/* BOTÓN O PERFIL DE USUARIO */}
         {currentUser ? (
           <div className="flex items-center gap-2">
-            {isEspecialista ? (
+            {isAdmin ? (
+              <button
+                onClick={onOpenAdminDashboard}
+                className="px-3.5 py-1.5 bg-charcoal text-gold hover:bg-charcoal/90 rounded-full font-bold text-xs flex items-center gap-1.5 shadow-sm border border-gold/60 transition-colors"
+                title="Abrir panel de administración"
+              >
+                <span>👑</span>
+                <span className="hidden sm:inline">Panel Admin</span>
+              </button>
+            ) : isEspecialista ? (
               <button
                 onClick={onOpenSpecialistDashboard}
                 className="px-3.5 py-1.5 bg-charcoal text-white hover:bg-charcoal/90 rounded-full font-bold text-xs flex items-center gap-1.5 shadow-sm border border-gold/40 transition-colors"
