@@ -7,3 +7,5 @@ build/
 .env.local
 backend/.env
 frontend/.env
+.env.*
+!.env.example

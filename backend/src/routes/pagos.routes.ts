@@ -325,15 +325,28 @@ router.post('/crear-orden', autenticarOpcional, procesarCreacionOrdenMercadoPago
 // Alias de compatibilidad hacia crear-preferencia
 router.post('/crear-preferencia', autenticarOpcional, procesarCreacionOrdenMercadoPago);
 
-// 3. Confirmar o simular aprobación de pago en Sandbox
+// 3. Confirmar o simular aprobación de pago (SOLO modo simulador)
 router.post('/confirmar-pago', async (req: Request, res: Response) => {
+    const esSimulador =
+        !env.MERCADOPAGO_ACCESS_TOKEN || env.MERCADOPAGO_ACCESS_TOKEN.startsWith('TEST-000000');
+
+    if (!esSimulador) {
+        return res.status(403).json({
+            ok: false,
+            error: 'Confirmación manual deshabilitada: el pago se valida con Mercado Pago',
+        });
+    }
+
+    const { referencia_transaccion, estado = 'APROBADO' } = req.body;
+    if (!referencia_transaccion) {
+        return res.status(400).json({ ok: false, error: 'referencia_transaccion es obligatoria' });
+    }
+    if (!['APROBADO', 'RECHAZADO'].includes(estado)) {
+        return res.status(400).json({ ok: false, error: 'Estado de pago no válido' });
+    }
+
     const client = await pool.connect();
     try {
-        const { referencia_transaccion, estado = 'APROBADO' } = req.body;
-        if (!referencia_transaccion) {
-            return res.status(400).json({ ok: false, error: 'referencia_transaccion es obligatoria' });
-        }
-
         await client.query('BEGIN');
         const pagoRes = await client.query(
             `UPDATE pagos
