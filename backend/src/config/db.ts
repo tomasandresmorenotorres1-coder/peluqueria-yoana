@@ -3,10 +3,11 @@ import { env } from './env';
 
 // Solo se activa si defines DB_SSL=true (útil al conectar desde tu PC a la URL pública)
 const sslActivo = process.env.DB_SSL === 'true';
+const urlBD = process.env.DATABASE_URL || env.DATABASE_URL;
 
 export const pool = new Pool({
-    ...(env.DATABASE_URL
-        ? { connectionString: env.DATABASE_URL }
+    ...(urlBD
+        ? { connectionString: urlBD }
         : {
             host: env.DB_HOST,
             port: env.DB_PORT,
@@ -25,9 +26,9 @@ export const verificarConexionDB = async (): Promise<boolean> => {
     } catch (error: any) {
         let destino = 'SIN DATABASE_URL (usando DB_HOST / localhost)';
         try {
-            if (env.DATABASE_URL) {
+            if (urlBD) {
                 const u = new URL(env.DATABASE_URL);
-                destino = `${u.hostname}:${u.port}/${u.pathname.slice(1)}`;
+                destino = `${u.hostname}:${u.port}/${u.pathname.slice(1)} (largo de contraseña: ${u.password.length}, env.ts igual: ${process.env.DATABASE_URL === env.DATABASE_URL})`;
             }
         } catch {
             destino = 'DATABASE_URL presente pero con formato inválido';
