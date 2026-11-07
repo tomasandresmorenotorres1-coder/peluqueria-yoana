@@ -1,8 +1,11 @@
 import { Pool } from 'pg';
 import { env } from './env';
 
-export const pool = new Pool(
-    env.DATABASE_URL
+// Solo se activa si defines DB_SSL=true (útil al conectar desde tu PC a la URL pública)
+const sslActivo = process.env.DB_SSL === 'true';
+
+export const pool = new Pool({
+    ...(env.DATABASE_URL
         ? { connectionString: env.DATABASE_URL }
         : {
             host: env.DB_HOST,
@@ -10,19 +13,19 @@ export const pool = new Pool(
             user: env.DB_USER,
             password: env.DB_PASSWORD,
             database: env.DB_NAME,
-        }
-);
+        }),
+    ssl: sslActivo ? { rejectUnauthorized: false } : undefined,
+});
 
 export const verificarConexionDB = async (): Promise<boolean> => {
     try {
         const client = await pool.connect();
-        console.log(' Conectado exitosamente a PostgreSQL (peluqueria_yoana)');
+        console.log('Conectado exitosamente a PostgreSQL');
         client.release();
         return true;
     } catch (error: any) {
         console.error('⚠️ Advertencia al conectar con PostgreSQL:', error.message);
-        console.error('Asegúrate de que PostgreSQL esté corriendo en el puerto 5432 y que las credenciales en backend/.env sean correctas.');
-        console.error('Puedes inicializar o migrar la base de datos con: npm run db:setup');
+        console.error('Revisa DATABASE_URL (o DB_HOST/DB_USER/...) y, si es necesario, DB_SSL=true.');
         return false;
     }
 };

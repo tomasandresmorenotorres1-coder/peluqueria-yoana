@@ -18,6 +18,9 @@ export const obtenerTransporter = (): Transporter | null => {
                     user: env.SMTP_USER,
                     pass: env.SMTP_PASS,
                 },
+                connectionTimeout: 10000,
+                greetingTimeout: 10000,
+                socketTimeout: 15000,
             });
         }
 
@@ -46,15 +49,13 @@ export const obtenerTransporter = (): Transporter | null => {
 export async function enviarPinRegistro(email: string, nombre: string, pin: string): Promise<boolean> {
     const destinatarioDinamico = email.trim();
     const remitenteOficial = env.SMTP_FROM || 'Peluquería Yohana <notificaciones@peluqueriayoana.com>';
+    const escaparHtml = (s: string) =>
+        s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+    const mostrarPin = process.env.NODE_ENV !== 'production' || process.env.MOSTRAR_PIN_EN_LOG === 'true';
 
-    console.log(`\n======================================================`);
-    console.log(`🔑 [PIN DE VERIFICACIÓN REGISTRO - PELUQUERÍA YOHANA]`);
-    console.log(`📤 Remitente oficial:   ${remitenteOficial}`);
-    console.log(`📥 Destinatario dinámico: ${nombre} <${destinatarioDinamico}>`);
-    console.log(`🔢 PIN generado:        ${pin}`);
-    console.log(`⏳ Validez temporal:    15 minutos`);
-    console.log(`======================================================\n`);
-
+    if (mostrarPin) {
+        console.log(`\n🔑 [PIN REGISTRO] ${nombre} <${destinatarioDinamico}> → ${pin} (15 min)\n`);
+    }
     const transporter = obtenerTransporter();
 
     if (!transporter) {

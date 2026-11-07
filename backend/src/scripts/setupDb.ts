@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { Client } from 'pg';
+import { Client, ClientConfig } from 'pg';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -12,100 +12,86 @@ const DB_USER = process.env.DB_USER || 'postgres';
 const DB_PASSWORD = process.env.DB_PASSWORD || '';
 const DB_NAME = process.env.DB_NAME || 'peluqueria_yoana';
 
+const usaUrl = Boolean(process.env.DATABASE_URL);
+const ssl = process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : undefined;
+const force = process.argv.includes('--force');
+
+function leerSql(nombre: string, obligatorio: boolean): string | null {
+    const ruta = path.resolve(__dirname, '../../database', nombre);
+    if (!fs.existsSync(ruta)) {
+        if (obligatorio) throw new Error(`No se encontró el archivo obligatorio: ${ruta}`);
+        console.warn(`⚠️ Omitido (no existe): ${nombre}`);
+        return null;
+    }
+    return fs.readFileSync(ruta, 'utf-8');
+}
+
 export async function setupDatabase() {
-    console.log('🔄 Iniciando configuración y migración de base de datos...');
-    console.log(`Conectando a PostgreSQL en ${DB_HOST}:${DB_PORT} como usuario '${DB_USER}'...`);
+    console.log('🔄 Iniciando configuración de base de datos...');
 
-    // 1. Conexión a la base por defecto 'postgres' para verificar/crear la BD si no existe
-    const adminClient = new Client(
-        process.env.DATABASE_URL
-            ? { connectionString: process.env.DATABASE_URL.replace(/peluqueria_yoana.*$/, 'postgres') }
-            : {
-                host: DB_HOST,
-                port: DB_PORT,
-                user: DB_USER,
-                password: DB_PASSWORD,
-                database: 'postgres',
+    // 1. Solo en local: crear la BD si no existe. Con DATABASE_URL (Railway) la BD ya existe.
+    if (!usaUrl) {
+        const adminClient = new Client({
+            host: DB_HOST, port: DB_PORT, user: DB_USER, password: DB_PASSWORD,
+            database: 'postgres', ssl,
+        });
+        try {
+            await adminClient.connect();
+            const existe = await adminClient.query('SELECT 1 FROM pg_database WHERE datname = $1', [DB_NAME]);
+            if (existe.rows.length === 0) {
+                await adminClient.query(`CREATE DATABASE "${DB_NAME}"`);
+                console.log(`✅ Base de datos '${DB_NAME}' creada.`);
             }
-    );
-
-    try {
-        await adminClient.connect();
-        const checkDb = await adminClient.query(
-            "SELECT 1 FROM pg_database WHERE datname = $1",
-            [DB_NAME]
-        );
-
-        if (checkDb.rows.length === 0) {
-            console.log(`Creando base de datos '${DB_NAME}'...`);
-            await adminClient.query(`CREATE DATABASE "${DB_NAME}"`);
-            console.log(`✅ Base de datos '${DB_NAME}' creada con éxito.`);
-        } else {
-            console.log(`ℹ️ La base de datos '${DB_NAME}' ya existe.`);
+        } catch (err: any) {
+            console.warn(`Advertencia al verificar/crear la BD: ${err.message}`);
+        } finally {
+            await adminClient.end().catch(() => { });
         }
-    } catch (err: any) {
-        console.warn(`Advertencia al verificar la base 'postgres': ${err.message}`);
-    } finally {
-        await adminClient.end().catch(() => {});
     }
 
-    // 2. Conectar a la base de datos de la aplicación para aplicar esquema y seeds
-    const appClient = new Client(
-        process.env.DATABASE_URL
-            ? { connectionString: process.env.DATABASE_URL }
-            : {
-                host: DB_HOST,
-                port: DB_PORT,
-                user: DB_USER,
-                password: DB_PASSWORD,
-                database: DB_NAME,
-            }
-    );
+    // 2. Conexión a la BD de la aplicación
+    const config: ClientConfig = usaUrl
+        ? { connectionString: process.env.DATABASE_URL, ssl }
+        : { host: DB_HOST, port: DB_PORT, user: DB_USER, password: DB_PASSWORD, database: DB_NAME, ssl };
+
+    const appClient = new Client(config);
 
     try {
         await appClient.connect();
-        console.log(`Conectado a '${DB_NAME}'. Aplicando esquema...`);
+        console.log('Conectado a la base de datos. Revisando estado...');
 
-        const schemaPath = path.resolve(__dirname, '../../database/01_shema.sql');
-        const seedPath = path.resolve(__dirname, '../../database/02_shema.sql');
-        const authPath = path.resolve(__dirname, '../../database/03_usuarios.sql');
-        const actualizPath = path.resolve(__dirname, '../../database/04_actualizaciones_especialistas_pines_mp.sql');
-
-        // Las tablas de usuarios y horarios dependen de equipo y clientes: se borran primero para recrearlas limpias
-        await appClient.query('DROP TABLE IF EXISTS registro_pines, especialistas_servicios, bloqueos_estilista, horarios_estilista, usuarios CASCADE');
-
-        if (fs.existsSync(schemaPath)) {
-            const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
-            await appClient.query(schemaSql);
-            console.log('✅ Esquema 01_shema.sql aplicado exitosamente.');
+        // Protección: no tocar una BD que ya tiene datos, salvo con --force
+        const yaInicializada = await appClient.query("SELECT to_regclass('public.turnos') AS t");
+        if (yaInicializada.rows[0].t && !force) {
+            console.log('ℹ️ La BD ya tiene tablas. No se hace nada. Usa --force para recrearla (borra datos).');
+            return;
         }
 
-        if (fs.existsSync(seedPath)) {
-            const seedSql = fs.readFileSync(seedPath, 'utf-8');
-            await appClient.query(seedSql);
-            console.log('✅ Semillas 02_shema.sql aplicadas exitosamente.');
-        }
+        const schemaSql = leerSql('01_shema.sql', true)!;
+        const seedSql = leerSql('02_shema.sql', true)!;
+        const authSql = leerSql('03_usuarios.sql', false);
+        const actualizSql = leerSql('04_actualizaciones_especialistas_pines_mp.sql', false);
 
-        if (fs.existsSync(authPath)) {
-            await appClient.query(fs.readFileSync(authPath, 'utf-8'));
-            console.log('✅ Usuarios y horarios 03_usuarios.sql aplicados exitosamente.');
-        }
+        await appClient.query(
+            'DROP TABLE IF EXISTS registro_pines, especialistas_servicios, bloqueos_estilista, horarios_estilista, usuarios CASCADE'
+        );
 
-        if (fs.existsSync(actualizPath)) {
-            await appClient.query(fs.readFileSync(actualizPath, 'utf-8'));
-            console.log('✅ Actualizaciones y especialistas 04_actualizaciones_especialistas_pines_mp.sql aplicados exitosamente.');
-        }
+        await appClient.query(schemaSql);
+        console.log('✅ 01_shema.sql aplicado.');
+        await appClient.query(seedSql);
+        console.log('✅ 02_shema.sql aplicado.');
+        if (authSql) { await appClient.query(authSql); console.log('✅ 03_usuarios.sql aplicado.'); }
+        if (actualizSql) { await appClient.query(actualizSql); console.log('✅ 04_actualizaciones... aplicado.'); }
 
-        console.log('🎉 Base de datos configurada e integrada al 100%.');
+        console.log('🎉 Base de datos configurada.');
     } catch (err: any) {
         console.error('❌ Error al aplicar esquema/semillas:', err.message);
         throw err;
     } finally {
-        await appClient.end().catch(() => {});
+        await appClient.end().catch(() => { });
     }
 }
 
-// Permitir ejecución directa por CLI
 if (require.main === module) {
     setupDatabase()
         .then(() => process.exit(0))

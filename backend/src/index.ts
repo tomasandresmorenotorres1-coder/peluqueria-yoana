@@ -21,7 +21,26 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 
 // Middlewares globales
-app.use(cors({ origin: process.env.FRONTEND_URL || true }));
+// CORS: FRONTEND_URL puede tener varias URLs separadas por coma, sin "/" final
+const origenesPermitidos = (process.env.FRONTEND_URL || '')
+    .split(',')
+    .map((o) => o.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+origenesPermitidos.push('http://localhost:5173');
+app.use(express.json());
+
+// Previews de Vercel de TU proyecto (ajusta el prefijo al nombre real del proyecto)
+const regexPreviews = /^https:\/\/peluqueria-yoana-[a-z0-9-]+\.vercel\.app$/;
+
+app.use(cors({
+    origin: (origin, callback) => {
+        if (!origin) return callback(null, true); // webhooks, curl, health checks
+        if (origenesPermitidos.includes(origin) || regexPreviews.test(origin)) {
+            return callback(null, true);
+        }
+        return callback(null, false);
+    },
+}));
 app.use(express.json());
 
 // Endpoint de salud del servidor y base de datos
@@ -65,5 +84,5 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 // Iniciar servidor
 app.listen(PORT, async () => {
     await verificarConexionDB();
-    console.log(`Servidor backend corriendo en http://localhost:${PORT}`);
+    console.log(`Servidor backend escuchando en el puerto ${PORT}`);
 });

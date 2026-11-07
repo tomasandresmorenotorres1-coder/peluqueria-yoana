@@ -55,8 +55,9 @@ INSERT INTO especialistas_servicios (equipo_id, servicio_id) VALUES
   (6, 4), (6, 5), (6, 7), (6, 12)
 ON CONFLICT (equipo_id, servicio_id) DO NOTHING;
 
--- 4. Inserción de los 6 Especialistas en la tabla usuarios (Contraseña: Especialista2026*)
+-- 4. Inserción de los 6 Especialistas y el Administrador General
 INSERT INTO usuarios (email, password_hash, nombre_completo, rol, equipo_id, telefono, activo) VALUES
+  ('admin@peluqueriayoana.com', '$2b$12$nZo.n4D0e3eVl7pOPXT0ROfZzCi/uQGLaXpwmGip/djbVBZBnh/I2', 'Administrador General', 'ADMIN', NULL, '+57 300 000 0000', TRUE),
   ('marco.rios@peluqueriayoana.com', '$2b$12$nZo.n4D0e3eVl7pOPXT0ROfZzCi/uQGLaXpwmGip/djbVBZBnh/I2', 'Marco Ríos', 'ESPECIALISTA', 1, '+57 310 111 2233', TRUE),
   ('diego.torres@peluqueriayoana.com', '$2b$12$nZo.n4D0e3eVl7pOPXT0ROfZzCi/uQGLaXpwmGip/djbVBZBnh/I2', 'Diego Torres', 'ESPECIALISTA', 2, '+57 311 222 3344', TRUE),
   ('sebastian.cruz@peluqueriayoana.com', '$2b$12$nZo.n4D0e3eVl7pOPXT0ROfZzCi/uQGLaXpwmGip/djbVBZBnh/I2', 'Sebastián Cruz', 'ESPECIALISTA', 3, '+57 312 333 4455', TRUE),
@@ -64,7 +65,7 @@ INSERT INTO usuarios (email, password_hash, nombre_completo, rol, equipo_id, tel
   ('valentina.lopez@peluqueriayoana.com', '$2b$12$nZo.n4D0e3eVl7pOPXT0ROfZzCi/uQGLaXpwmGip/djbVBZBnh/I2', 'Valentina López', 'ESPECIALISTA', 5, '+57 314 555 6677', TRUE),
   ('camila.romero@peluqueriayoana.com', '$2b$12$nZo.n4D0e3eVl7pOPXT0ROfZzCi/uQGLaXpwmGip/djbVBZBnh/I2', 'Camila Romero', 'ESPECIALISTA', 6, '+57 315 666 7788', TRUE)
 ON CONFLICT (LOWER(email)) DO UPDATE SET
-  rol = 'ESPECIALISTA',
+  rol = EXCLUDED.rol,
   equipo_id = EXCLUDED.equipo_id,
   password_hash = EXCLUDED.password_hash,
   telefono = EXCLUDED.telefono,

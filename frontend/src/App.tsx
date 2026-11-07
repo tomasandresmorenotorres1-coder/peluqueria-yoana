@@ -176,7 +176,7 @@ export default function App() {
     loadInitialData();
 
     // Comprobar retorno de Mercado Pago en URL
-    if (window.location.search.includes("pago=aprobado") || window.location.search.includes("pago=exito")) {
+    if (window.location.search.includes("pago=aprobado") || window.location.search.includes("Pago recibido. Tu turno quedará confirmado cuando validemos el pago.")) {
       setToastMessage("✓ ¡Pago con Mercado Pago recibido y confirmado exitosamente!");
     }
 
@@ -299,7 +299,7 @@ export default function App() {
         notas_accesibilidad: clientData.notas,
       });
 
-      setBookingInfo(res.turno);
+      setBookingInfo({ ...res.turno, whatsapp_url: res.whatsapp_url });
       setBookingDone(true);
       setHorasOcupadas((prev) => [...prev, selectedTime]);
     } catch (err: any) {
