@@ -16,7 +16,6 @@ export const pool = new Pool({
         }),
     ssl: sslActivo ? { rejectUnauthorized: false } : undefined,
 });
-
 export const verificarConexionDB = async (): Promise<boolean> => {
     try {
         const client = await pool.connect();
@@ -24,8 +23,21 @@ export const verificarConexionDB = async (): Promise<boolean> => {
         client.release();
         return true;
     } catch (error: any) {
-        console.error('⚠️ Advertencia al conectar con PostgreSQL:', error.message);
-        console.error('Revisa DATABASE_URL (o DB_HOST/DB_USER/...) y, si es necesario, DB_SSL=true.');
+        let destino = 'SIN DATABASE_URL (usando DB_HOST / localhost)';
+        try {
+            if (env.DATABASE_URL) {
+                const u = new URL(env.DATABASE_URL);
+                destino = `${u.hostname}:${u.port}/${u.pathname.slice(1)}`;
+            }
+        } catch {
+            destino = 'DATABASE_URL presente pero con formato inválido';
+        }
+        console.error('⚠️ Advertencia al conectar con PostgreSQL');
+        console.error('Destino:', destino);
+        console.error('Código:', error.code, '| Mensaje:', error.message);
+        if (Array.isArray(error.errors)) {
+            for (const e of error.errors) console.error(` - ${e.address}:${e.port} ${e.code}`);
+        }
         return false;
     }
 };
