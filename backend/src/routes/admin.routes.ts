@@ -240,6 +240,50 @@ const servicios = crearCatalogo(
     ['icono', 'genero']
 );
 router.post('/servicios', servicios.crear);
+router.get('/servicios', async (_req: Request, res: Response) => {
+    try {
+        const query = `
+            SELECT s.id, c.nombre AS categoria_nombre, s.nombre, s.descripcion,
+                   s.precio_actual, s.duracion_minutos, s.icono, s.texto_alternativo,
+                   s.genero, s.activo,
+                   COALESCE(ROUND(AVG(r.calificacion)::numeric, 1), 5.0) AS calificacion_promedio,
+                   COUNT(r.id)::int AS total_resenas,
+                   COALESCE(ARRAY_AGG(DISTINCT es.equipo_id) FILTER (WHERE es.equipo_id IS NOT NULL), '{}') AS especialistas_ids
+            FROM servicios s
+            JOIN categorias c ON s.categoria_id = c.id
+            LEFT JOIN resenas r ON r.servicio_id = s.id AND r.aprobada = TRUE
+            LEFT JOIN especialistas_servicios es ON es.servicio_id = s.id
+            GROUP BY s.id, c.nombre
+            ORDER BY s.id ASC
+        `;
+        const { rows } = await pool.query(query);
+        const data = rows.map((r) => ({
+            id: r.id,
+            name: r.nombre,
+            desc: r.descripcion,
+            duration: `${r.duracion_minutos} min`,
+            price: Number(r.precio_actual),
+            icon: r.icono || '✂️',
+            category: r.genero || 'unisex',
+            img: 'https://images.unsplash.com/photo-1560066984-138daaa70c8f?w=600&h=400&fit=crop&auto=format',
+            rating: Number(r.calificacion_promedio || 5.0),
+            totalReviews: Number(r.total_resenas || 0),
+            especialistas_ids: (r.especialistas_ids || []).map(Number),
+            activo: r.activo,
+            nombre: r.nombre,
+            descripcion: r.descripcion,
+            duracion_minutos: r.duracion_minutos,
+            precio_actual: Number(r.precio_actual),
+            icono: r.icono,
+            texto_alternativo: r.texto_alternativo,
+            genero: r.genero,
+            categoria_nombre: r.categoria_nombre,
+        }));
+        res.json({ ok: true, data });
+    } catch (error) {
+        responderErrorBD(error, res, 'obtener servicios admin');
+    }
+});
 router.put('/servicios/:id', servicios.editar);
 router.patch('/servicios/:id/activo', servicios.activar);
 
@@ -249,6 +293,73 @@ const productos = crearCatalogo(
     ['marca', 'descripcion', 'stock', 'etiqueta', 'genero']
 );
 router.post('/productos', productos.crear);
+router.get('/productos', async (_req: Request, res: Response) => {
+    try {
+        const query = `
+            SELECT p.id, c.nombre AS categoria_nombre, p.nombre, p.marca,
+                   p.descripcion, p.precio_actual, p.stock, p.imagen_url,
+                   p.texto_alternativo, p.etiqueta, p.genero, p.activo
+            FROM productos p
+            JOIN categorias c ON p.categoria_id = c.id
+            ORDER BY p.id ASC
+        `;
+        const { rows } = await pool.query(query);
+        const data = rows.map((r) => ({
+            id: r.id,
+            name: r.nombre,
+            brand: r.marca,
+            desc: r.descripcion,
+            price: Number(r.precio_actual),
+            stock: Number(r.stock ?? 0),
+            img: r.imagen_url,
+            tag: r.etiqueta,
+            category: r.genero,
+            activo: r.activo,
+            nombre: r.nombre,
+            marca: r.marca,
+            descripcion: r.descripcion,
+            precio_actual: Number(r.precio_actual),
+            imagen_url: r.imagen_url,
+            texto_alternativo: r.texto_alternativo,
+            etiqueta: r.etiqueta,
+            genero: r.genero,
+            categoria_nombre: r.categoria_nombre,
+        }));
+        res.json({ ok: true, data });
+    } catch (error) {
+        responderErrorBD(error, res, 'obtener productos admin');
+    }
+});
+router.patch('/productos/:id/stock', async (req: Request, res: Response) => {
+    try {
+        const id = leerId(req.params.id);
+        if (!id) return res.status(400).json({ ok: false, error: 'id inválido' });
+
+        const nuevoStock = Number(req.body.stock);
+        if (!Number.isInteger(nuevoStock) || nuevoStock < 0) {
+            return res.status(400).json({ ok: false, error: 'El stock debe ser un número entero mayor o igual a 0' });
+        }
+
+        const { rows } = await pool.query(
+            `UPDATE productos
+             SET stock = $1, actualizado_en = CURRENT_TIMESTAMP
+             WHERE id = $2 RETURNING id, nombre, stock, activo`,
+            [nuevoStock, id]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ ok: false, error: 'Producto no encontrado' });
+        }
+
+        res.json({
+            ok: true,
+            mensaje: `Stock de ${rows[0].nombre} actualizado a ${rows[0].stock} unidades en la base de datos`,
+            data: rows[0],
+        });
+    } catch (error) {
+        responderErrorBD(error, res, 'actualizar stock producto');
+    }
+});
 router.put('/productos/:id', productos.editar);
 router.patch('/productos/:id/activo', productos.activar);
 

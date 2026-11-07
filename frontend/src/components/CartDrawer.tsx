@@ -1,5 +1,7 @@
 import { useState } from "react";
-import type { CartItem, OrderRequest } from "@/types";
+import type { CartItem, OrderRequest, PreferenciaPagoResponse } from "@/types";
+import { crearPreferenciaMercadoPago, confirmarPagoSimulado } from "@/services/api";
+import MercadoPagoButton from "./MercadoPagoButton";
 
 type CartDrawerProps = {
   open: boolean;
@@ -10,7 +12,8 @@ type CartDrawerProps = {
   onRemove: (id: number) => void;
   /** Actualiza la cantidad de un ítem; si qty <= 0 lo elimina */
   onUpdateQty: (id: number, qty: number) => void;
-  onCheckout: (data: OrderRequest) => Promise<boolean>;
+  onCheckout: (data: OrderRequest) => Promise<any>;
+  onClearCart?: () => void;
 };
 
 export default function CartDrawer({
@@ -22,13 +25,22 @@ export default function CartDrawer({
   onRemove,
   onUpdateQty,
   onCheckout,
+  onClearCart,
 }: CartDrawerProps) {
-  const [checkoutStep, setCheckoutStep] = useState<"cart" | "form" | "success">("cart");
+  const [checkoutStep, setCheckoutStep] = useState<"cart" | "form" | "mp_checkout" | "success">("cart");
   const [nombre, setNombre] = useState("");
   const [telefono, setTelefono] = useState("");
+  const [email, setEmail] = useState("");
   const [direccion, setDireccion] = useState("");
   const [metodoEntrega, setMetodoEntrega] = useState<"RETIRO_LOCAL" | "DOMICILIO">("RETIRO_LOCAL");
+  const [metodoPago, setMetodoPago] = useState<"LOCAL" | "MERCADO_PAGO">("MERCADO_PAGO");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Estado de Mercado Pago
+  const [cargandoMP, setCargandoMP] = useState(false);
+  const [preferenciaMP, setPreferenciaMP] = useState<PreferenciaPagoResponse | null>(null);
+  const [savedOrdenId, setSavedOrdenId] = useState<number | undefined>(undefined);
+  const [pagoAprobado, setPagoAprobado] = useState(false);
 
   if (!open) return null;
 
@@ -40,22 +52,83 @@ export default function CartDrawer({
     }
     setErrorMsg(null);
 
-    const success = await onCheckout({
-      nombre_completo: nombre.trim(),
-      telefono_whatsapp: telefono.trim(),
-      metodo_entrega: metodoEntrega,
-      direccion_entrega: metodoEntrega === "DOMICILIO" ? direccion.trim() : undefined,
-      items: cart.map((i) => ({ id: i.id, qty: i.qty })),
-    });
+    // Si seleccionó pago en el local
+    if (metodoPago === "LOCAL") {
+      const res = await onCheckout({
+        nombre_completo: nombre.trim(),
+        telefono_whatsapp: telefono.trim(),
+        email: email.trim() || undefined,
+        metodo_entrega: metodoEntrega,
+        direccion_entrega: metodoEntrega === "DOMICILIO" ? direccion.trim() : undefined,
+        items: cart.map((i) => ({ id: i.id, qty: i.qty })),
+      });
+      if (res) {
+        onClearCart?.();
+        setCheckoutStep("success");
+      }
+      return;
+    }
 
-    if (success) {
-      setCheckoutStep("success");
+    // Si seleccionó Mercado Pago Sandbox
+    setCargandoMP(true);
+    try {
+      // 1. Guardar primero la orden en PostgreSQL para asociar los productos y descontar stock
+      const ordenResult = await onCheckout({
+        nombre_completo: nombre.trim(),
+        telefono_whatsapp: telefono.trim(),
+        email: email.trim() || undefined,
+        metodo_entrega: metodoEntrega,
+        direccion_entrega: metodoEntrega === "DOMICILIO" ? direccion.trim() : undefined,
+        items: cart.map((i) => ({ id: i.id, qty: i.qty })),
+      });
+
+      const resolvedId =
+        ordenResult?.id ||
+        ordenResult?.orden?.id ||
+        (typeof ordenResult === "number" ? ordenResult : undefined);
+
+      setSavedOrdenId(resolvedId);
+
+      // 2. Generar la orden / preferencia en Mercado Pago con los ítems del carrito
+      const pref = await crearPreferenciaMercadoPago({
+        orden_id: resolvedId,
+        items: cart.map((i) => ({
+          id: i.id,
+          title: i.name,
+          quantity: i.qty,
+          unit_price: i.price,
+        })),
+        titulo: `Carrito de Productos (${cart.length} artículos)`,
+      });
+
+      setPreferenciaMP(pref);
+      setCheckoutStep("mp_checkout");
+    } catch (err: any) {
+      setErrorMsg(err.message || "Error al conectar con la pasarela de Mercado Pago.");
+    } finally {
+      setCargandoMP(false);
+    }
+  };
+
+  const handleSimularAprobacionMP = async () => {
+    if (!preferenciaMP?.referencia) return;
+    try {
+      await confirmarPagoSimulado(preferenciaMP.referencia);
+      setPagoAprobado(true);
+      onClearCart?.();
+      setTimeout(() => {
+        setCheckoutStep("success");
+      }, 1200);
+    } catch (err: any) {
+      alert("Error al simular pago: " + err.message);
     }
   };
 
   const handleCloseAndReset = () => {
     setCheckoutStep("cart");
     setErrorMsg(null);
+    setPreferenciaMP(null);
+    setPagoAprobado(false);
     onClose();
   };
 
@@ -71,14 +144,65 @@ export default function CartDrawer({
         </div>
 
         {checkoutStep === "success" ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-            <div className="text-5xl mb-4">🎉</div>
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center animate-in zoom-in-95 duration-300">
+            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center text-3xl mb-4 shadow-sm">
+              ✓
+            </div>
             <h4 className="font-display text-2xl font-bold text-rust mb-2">¡Orden Confirmada!</h4>
             <p className="copy text-sm mb-6">
               Tu orden ha sido registrada exitosamente en PostgreSQL y el stock de los productos ha sido actualizado.
             </p>
             <button onClick={handleCloseAndReset} className="btn btn-primary w-full">
               Volver a la tienda
+            </button>
+          </div>
+        ) : checkoutStep === "mp_checkout" ? (
+          /* PASO: CHECKOUT DE MERCADO PAGO SANDBOX */
+          <div className="flex-1 flex flex-col p-6 space-y-5 overflow-y-auto animate-in fade-in duration-300">
+            <div className="bg-[#009EE3]/10 p-5 rounded-3xl border border-[#009EE3]/30 text-center space-y-3">
+              <span className="text-4xl block">💳</span>
+              <h4 className="font-display text-xl font-bold text-charcoal">
+                Pasarela Mercado Pago
+              </h4>
+              <p className="text-xs text-charcoal/70">
+                Tu orden está lista. Puedes realizar el pago de prueba en el entorno Sandbox o simular la aprobación inmediata.
+              </p>
+              <div className="bg-white p-3 rounded-2xl border border-charcoal/10 text-xs">
+                <span className="text-charcoal/60">Total a Pagar: </span>
+                <span className="font-extrabold text-rust text-base">
+                  ${totalPrice.toLocaleString("es-CO")}
+                </span>
+              </div>
+            </div>
+
+            {/* BOTÓN Y ACCIONES DE MERCADO PAGO */}
+            {preferenciaMP && (
+              <MercadoPagoButton
+                initPoint={preferenciaMP.init_point}
+                sandboxInitPoint={preferenciaMP.sandbox_init_point}
+                monto={preferenciaMP.monto_total || totalPrice}
+                ordenId={savedOrdenId || preferenciaMP.orden_id}
+                referencia={preferenciaMP.referencia}
+                text="Abrir Checkout de Mercado Pago"
+                tarjetasPrueba={preferenciaMP.tarjetas_prueba}
+                onSimularAprobacion={handleSimularAprobacionMP}
+                onPagoExitoso={() => {
+                  setPagoAprobado(true);
+                  onClearCart?.();
+                  setTimeout(() => {
+                    setCheckoutStep("success");
+                  }, 1200);
+                }}
+                pagoAprobado={pagoAprobado}
+              />
+            )}
+
+            <button
+              type="button"
+              onClick={() => setCheckoutStep("form")}
+              className="btn btn-outline w-full text-xs py-2.5 mt-auto"
+            >
+              ← Modificar datos de entrega
             </button>
           </div>
         ) : cart.length === 0 ? (
@@ -95,7 +219,7 @@ export default function CartDrawer({
             </h4>
 
             {errorMsg && (
-              <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-xs">
+              <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs">
                 {errorMsg}
               </div>
             )}
@@ -112,16 +236,28 @@ export default function CartDrawer({
               />
             </div>
 
-            <div>
-              <label className="field-label">Teléfono WhatsApp *</label>
-              <input
-                type="tel"
-                required
-                value={telefono}
-                onChange={(e) => setTelefono(e.target.value)}
-                placeholder="Ej: +54 9 11 1234-5678"
-                className="field"
-              />
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="field-label">Teléfono WhatsApp *</label>
+                <input
+                  type="tel"
+                  required
+                  value={telefono}
+                  onChange={(e) => setTelefono(e.target.value)}
+                  placeholder="Ej: +57 300 123 4567"
+                  className="field"
+                />
+              </div>
+              <div>
+                <label className="field-label">Email (opcional)</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="correo@ejemplo.com"
+                  className="field"
+                />
+              </div>
             </div>
 
             <div>
@@ -158,6 +294,35 @@ export default function CartDrawer({
               </div>
             )}
 
+            {/* SELECCIÓN DE MÉTODO DE PAGO */}
+            <div className="border-t border-charcoal/10 pt-3">
+              <label className="field-label">Forma de Pago</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMetodoPago("MERCADO_PAGO")}
+                  className={`choice py-2.5 text-xs flex flex-col items-center gap-1 ${
+                    metodoPago === "MERCADO_PAGO"
+                      ? "border-[#009EE3] bg-[#009EE3]/10 ring-1 ring-[#009EE3] text-[#007EB5] font-bold"
+                      : "choice-idle"
+                  }`}
+                >
+                  <span className="text-base">💳</span>
+                  <span>Mercado Pago</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMetodoPago("LOCAL")}
+                  className={`choice py-2.5 text-xs flex flex-col items-center gap-1 ${
+                    metodoPago === "LOCAL" ? "choice-on-solid" : "choice-idle"
+                  }`}
+                >
+                  <span className="text-base">💵</span>
+                  <span>En el Local</span>
+                </button>
+              </div>
+            </div>
+
             <div className="mt-auto pt-4 border-t border-charcoal/10">
               <div className="flex justify-between mb-4 text-lg font-bold">
                 <span>Total a Pagar</span>
@@ -165,10 +330,18 @@ export default function CartDrawer({
               </div>
               <button
                 type="submit"
-                disabled={submitting || !nombre.trim() || !telefono.trim()}
-                className="btn btn-primary w-full disabled:opacity-50"
+                disabled={submitting || cargandoMP || !nombre.trim() || !telefono.trim()}
+                className={`btn w-full disabled:opacity-50 ${
+                  metodoPago === "MERCADO_PAGO" ? "bg-[#009EE3] text-white hover:bg-[#007EB5]" : "btn-primary"
+                }`}
               >
-                {submitting ? "Guardando orden en PostgreSQL..." : "Confirmar Orden"}
+                {cargandoMP
+                  ? "Conectando con Mercado Pago..."
+                  : submitting
+                  ? "Guardando orden en PostgreSQL..."
+                  : metodoPago === "MERCADO_PAGO"
+                  ? "Continuar al Pago con Mercado Pago →"
+                  : "Confirmar Orden (Pago Local)"}
               </button>
               <button
                 type="button"

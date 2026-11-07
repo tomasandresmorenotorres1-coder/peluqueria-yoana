@@ -38,6 +38,10 @@ if (databaseUrl) {
     }
 }
 
+// Desencriptación en tiempo de ejecución de la contraseña SMTP de Gmail (si tiene prefijo enc:)
+const rawSmtpPass = (process.env.SMTP_PASS || '').trim();
+const decryptedSmtpPass = decryptSafe(rawSmtpPass);
+
 export const env = {
     PORT: Number(process.env.PORT) || 4000,
     DATABASE_URL: databaseUrl,
@@ -49,11 +53,12 @@ export const env = {
     JWT_SECRET: process.env.JWT_SECRET || '1656a53daa2bec4a78d88e894bd938b06437c1e3dcdb41eee47105dfa9c731e4',
     JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '8h',
     WHATSAPP_NUMBER: process.env.WHATSAPP_NUMBER || '573001234567',
+    PUBLIC_KEY_MERCADOPAGO: process.env.PUBLIC_KEY_MERCADOPAGO || process.env.MERCADOPAGO_PUBLIC_KEY || '',
     MERCADOPAGO_ACCESS_TOKEN: process.env.MERCADOPAGO_ACCESS_TOKEN || '',
     SMTP_HOST: process.env.SMTP_HOST || 'smtp.gmail.com',
     SMTP_PORT: Number(process.env.SMTP_PORT) || 587,
     SMTP_USER: (process.env.SMTP_USER || '').trim(),
-    SMTP_PASS: (process.env.SMTP_PASS || '').trim(),
+    SMTP_PASS: decryptedSmtpPass,
     SMTP_FROM: (process.env.SMTP_FROM || 'Peluquería Yohana <notificaciones@peluqueriayoana.com>').replace(/^"|"$/g, '').trim(),
     FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:5173',
 };

@@ -35,6 +35,8 @@
     "db:migrate": "tsx src/scripts/setupDb.ts",
     "db:auth": "tsx src/scripts/migrateAuth.ts",
     "db:migrate:04": "tsx src/scripts/migrate04.ts",
-    "admin:crear": "tsx src/scripts/crearAdmin.ts"
+    "admin:crear": "tsx src/scripts/crearAdmin.ts",
+    "admin:seed": "tsx src/scripts/seedAdmin.ts",
+    "secret:encrypt": "tsx src/scripts/encryptSecret.ts"
   }
 }

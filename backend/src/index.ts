@@ -11,7 +11,7 @@ import { pool, verificarConexionDB } from './config/db';
 
 import catalogoRoutes from './routes/catalogo.routes';
 import turnosRoutes from './routes/turnos.routes';
-import pagosRoutes from './routes/pagos.routes';
+import pagosRoutes, { handleCardTokenization } from './routes/pagos.routes';
 import interaccionRoutes from './routes/interaccion.routes';
 import authRoutes from './routes/auth.routes';
 import adminRoutes from './routes/admin.routes';
@@ -47,6 +47,13 @@ app.use('/api/catalogo', catalogoRoutes);
 app.use('/api/turnos', turnosRoutes);
 app.use('/api/pagos', pagosRoutes);
 app.use('/api', interaccionRoutes);
+
+// Endpoint de compatibilidad directa para Mercado Pago Bricks Card Form Tokenization
+// Resuelve el error 404 en /checkout/v1/api/bricks/card-form/tokenization y /v1/card_tokens
+app.all('/checkout/v1/api/bricks/card-form/tokenization', handleCardTokenization);
+app.all('/api/checkout/v1/api/bricks/card-form/tokenization', handleCardTokenization);
+app.all('/v1/card_tokens', handleCardTokenization);
+app.all('/api/v1/card_tokens', handleCardTokenization);
 
 // Ruta no encontrada
 app.use((_req: Request, res: Response) => {

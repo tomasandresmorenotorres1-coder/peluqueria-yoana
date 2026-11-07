@@ -17,6 +17,7 @@ import PromoRegisterModal from "@/components/PromoRegisterModal";
 import ClientHistoryModal from "@/components/ClientHistoryModal";
 import SpecialistDashboard from "@/components/SpecialistDashboard";
 import AdminDashboard from "@/components/AdminDashboard";
+import AdminGuard from "@/components/guards/AdminGuard";
 import Chatbot from "@/components/Chatbot";
 
 import {
@@ -175,9 +176,30 @@ export default function App() {
     loadUser();
     loadInitialData();
 
-    // Comprobar retorno de Mercado Pago en URL
-    if (window.location.search.includes("pago=aprobado") || window.location.search.includes("pago=exito")) {
+    // Comprobar retorno de Mercado Pago en URL (back_urls: /pago-exitoso, /pago-fallido, /pago-pendiente)
+    const currentPath = window.location.pathname;
+    const currentSearch = window.location.search;
+    if (
+      currentPath.includes("pago-exitoso") ||
+      currentSearch.includes("pago=aprobado") ||
+      currentSearch.includes("pago=exito")
+    ) {
+
       setToastMessage("✓ ¡Pago con Mercado Pago recibido y confirmado exitosamente!");
+    } else if (currentPath.includes("pago-fallido") || currentSearch.includes("pago=fallido")) {
+      setToastMessage("⚠️ El pago con Mercado Pago no fue procesado o fue cancelado.");
+      if (currentPath.includes("pago-fallido")) {
+        window.history.replaceState(null, "", "/?pago=fallido");
+      }
+    } else if (currentPath.includes("pago-pendiente") || currentSearch.includes("pago=pendiente")) {
+      setToastMessage("⏳ Tu pago con Mercado Pago se encuentra en estado pendiente.");
+      if (currentPath.includes("pago-pendiente")) {
+        window.history.replaceState(null, "", "/?pago=pendiente");
+      }
+    }
+
+    if (currentPath.startsWith("/admin") || window.location.hash === "#admin") {
+      setAdminDashboardOpen(true);
     }
 
     return () => {
@@ -321,15 +343,14 @@ export default function App() {
   }
 
   // Finalizar compra de productos
-  async function handleCheckout(orderData: OrderRequest): Promise<boolean> {
+  async function handleCheckout(orderData: OrderRequest): Promise<any> {
     setSubmittingOrder(true);
     try {
-      await crearOrdenCompra(orderData);
-      setCart([]);
-      return true;
+      const res = await crearOrdenCompra(orderData);
+      return res?.orden || res;
     } catch (err: any) {
       alert(`Error al procesar la orden: ${err.message}`);
-      return false;
+      return null;
     } finally {
       setSubmittingOrder(false);
     }
@@ -380,14 +401,37 @@ export default function App() {
     setCommentSent(false);
   }
 
-  // Si el administrador tiene su panel abierto, mostrar la vista del panel de administración
-  if (adminDashboardOpen && currentUser && currentUser.rol === "ADMIN") {
+    // Si se solicita el panel admin (por estado o por ruta /admin / #admin), verificar mediante AdminGuard (RBAC)
+  if (adminDashboardOpen || window.location.pathname.startsWith("/admin") || window.location.hash === "#admin") {
     return (
-      <AdminDashboard
+      <AdminGuard
         user={currentUser}
-        onLogout={handleLogout}
-        onGoHome={() => setAdminDashboardOpen(false)}
-      />
+        loading={loading}
+        onOpenLogin={() => {
+          setAdminDashboardOpen(false);
+          setAuthModalMode("login");
+          setAuthModalOpen(true);
+        }}
+        onGoHome={() => {
+          setAdminDashboardOpen(false);
+          if (window.location.pathname.startsWith("/admin") || window.location.hash === "#admin") {
+            window.history.pushState(null, "", "/");
+          }
+        }}
+      >
+        {currentUser && (
+          <AdminDashboard
+            user={currentUser}
+            onLogout={handleLogout}
+            onGoHome={() => {
+              setAdminDashboardOpen(false);
+              if (window.location.pathname.startsWith("/admin") || window.location.hash === "#admin") {
+                window.history.pushState(null, "", "/");
+              }
+            }}
+          />
+        )}
+      </AdminGuard>
     );
   }
 
@@ -536,6 +580,7 @@ export default function App() {
         onRemove={removeFromCart}
         onUpdateQty={updateCartQty}
         onCheckout={handleCheckout}
+        onClearCart={() => setCart([])}
       />
 
       {/* MODAL DE AUTENTICACIÓN (LOGIN Y REGISTRO CON PIN) */}
@@ -574,3 +619,5 @@ export default function App() {
     </div>
   );
 }
+
+

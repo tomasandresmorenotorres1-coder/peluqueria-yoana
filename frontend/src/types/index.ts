@@ -8,6 +8,7 @@ export type Product = {
   category: "hombre" | "mujer";
   stock?: number;
   desc?: string;
+  activo?: boolean;
 };
 
 export type Service = {
@@ -21,6 +22,7 @@ export type Service = {
   img?: string;
   rating?: number;
   especialistas_ids?: number[];
+  activo?: boolean;
 };
 
 export type ServiceTab = "todos" | "hombre" | "mujer" | "unisex";
@@ -154,6 +156,8 @@ export type PreferenciaPagoResponse = {
   referencia: string;
   sandbox_mode?: boolean;
   tarjetas_prueba?: TarjetaPruebaSandbox[];
+  orden_id?: number;
+  turno_id?: number;
 };
 
 export type AdminUsuario = {

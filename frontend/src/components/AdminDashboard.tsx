@@ -6,9 +6,12 @@ import {
   crearAdminUsuario,
   actualizarAdminUsuario,
   fetchServicios,
+  fetchAdminServicios,
   crearAdminServicio,
   cambiarActivoServicio,
   fetchProductos,
+  fetchAdminProductos,
+  actualizarStockProducto,
   crearAdminProducto,
   cambiarActivoProducto,
   fetchAdminResenas,
@@ -31,7 +34,7 @@ type AdminDashboardProps = {
   onGoHome: () => void;
 };
 
-type Tab = "turnos" | "usuarios" | "servicios" | "productos" | "resenas";
+type Tab = "turnos" | "usuarios" | "servicios" | "productos" | "resenas" | "desactivados";
 
 export default function AdminDashboard({ user, onLogout, onGoHome }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<Tab>("turnos");
@@ -79,10 +82,14 @@ export default function AdminDashboard({ user, onLogout, onGoHome }: AdminDashbo
   const [prodCategoria, setProdCategoria] = useState<"hombre" | "mujer">("hombre");
   const [prodImg, setProdImg] = useState("https://images.unsplash.com/photo-1527799820374-dcf8d9d4a388?w=400&h=400&fit=crop&auto=format");
   const [creandoProducto, setCreandoProducto] = useState(false);
+  const [actualizandoStockId, setActualizandoStockId] = useState<number | null>(null);
 
   // 5. Estado de Reseñas
   const [resenas, setResenas] = useState<AdminResena[]>([]);
   const [loadingResenas, setLoadingResenas] = useState(false);
+
+  // 6. Filtro de la sección de desactivados
+  const [filtroDesactivados, setFiltroDesactivados] = useState<"todos" | "productos" | "servicios">("todos");
 
   // Equipo para vincular estilistas
   const [equipo, setEquipo] = useState<StaffMember[]>([]);
@@ -205,10 +212,16 @@ export default function AdminDashboard({ user, onLogout, onGoHome }: AdminDashbo
   const loadServicios = async () => {
     setLoadingServicios(true);
     try {
-      const data = await fetchServicios();
+      const data = await fetchAdminServicios();
       setServicios(data);
     } catch (err: any) {
-      console.warn("Error al cargar servicios", err);
+      console.warn("Error al cargar servicios de admin, intentando fallback", err);
+      try {
+        const fallback = await fetchServicios();
+        setServicios(fallback);
+      } catch (e) {
+        console.warn("Fallo total al cargar servicios", e);
+      }
     } finally {
       setLoadingServicios(false);
     }
@@ -216,11 +229,22 @@ export default function AdminDashboard({ user, onLogout, onGoHome }: AdminDashbo
 
   const handleToggleServicioActivo = async (srv: Service) => {
     try {
-      await cambiarActivoServicio(srv.id, false);
-      showToast(`Servicio "${srv.name}" actualizado`);
+      const nuevoEstado = srv.activo === false;
+      await cambiarActivoServicio(srv.id, nuevoEstado);
+      showToast(nuevoEstado ? `Servicio "${srv.name}" reactivado` : `Servicio "${srv.name}" desactivado`);
       loadServicios();
     } catch (err: any) {
       setErrorMsg(err.message || "Error al cambiar estado del servicio");
+    }
+  };
+
+  const handleReactivarServicio = async (srv: Service) => {
+    try {
+      await cambiarActivoServicio(srv.id, true);
+      showToast(`✅ Servicio "${srv.name}" reactivado y visible en la web`);
+      loadServicios();
+    } catch (err: any) {
+      setErrorMsg(err.message || "Error al reactivar servicio");
     }
   };
 
@@ -262,10 +286,16 @@ export default function AdminDashboard({ user, onLogout, onGoHome }: AdminDashbo
   const loadProductos = async () => {
     setLoadingProductos(true);
     try {
-      const data = await fetchProductos();
+      const data = await fetchAdminProductos();
       setProductos(data);
     } catch (err: any) {
-      console.warn("Error al cargar productos", err);
+      console.warn("Error al cargar productos de admin, intentando fallback", err);
+      try {
+        const fallback = await fetchProductos();
+        setProductos(fallback);
+      } catch (e) {
+        console.warn("Fallo total al cargar productos", e);
+      }
     } finally {
       setLoadingProductos(false);
     }
@@ -273,11 +303,39 @@ export default function AdminDashboard({ user, onLogout, onGoHome }: AdminDashbo
 
   const handleToggleProductoActivo = async (prod: Product) => {
     try {
-      await cambiarActivoProducto(prod.id, false);
-      showToast(`Producto "${prod.name}" actualizado`);
+      const nuevoEstado = prod.activo === false;
+      await cambiarActivoProducto(prod.id, nuevoEstado);
+      showToast(nuevoEstado ? `Producto "${prod.name}" reactivado` : `Producto "${prod.name}" desactivado`);
       loadProductos();
     } catch (err: any) {
       setErrorMsg(err.message || "Error al cambiar estado del producto");
+    }
+  };
+
+  const handleReactivarProducto = async (prod: Product) => {
+    try {
+      await cambiarActivoProducto(prod.id, true);
+      showToast(`✅ Producto "${prod.name}" reactivado y disponible en la tienda`);
+      loadProductos();
+    } catch (err: any) {
+      setErrorMsg(err.message || "Error al reactivar producto");
+    }
+  };
+
+  const handleUpdateStock = async (prodId: number, nuevoStock: number) => {
+    if (nuevoStock < 0) return;
+    setActualizandoStockId(prodId);
+    try {
+      await actualizarStockProducto(prodId, nuevoStock);
+      setProductos((prev) =>
+        prev.map((item) => (item.id === prodId ? { ...item, stock: nuevoStock } : item))
+      );
+      showToast(`Stock actualizado a ${nuevoStock} unidades en PostgreSQL`);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Error al actualizar stock");
+      loadProductos();
+    } finally {
+      setActualizandoStockId(null);
     }
   };
 
@@ -457,6 +515,29 @@ export default function AdminDashboard({ user, onLogout, onGoHome }: AdminDashbo
             <span>Moderación de Reseñas</span>
             <span className="ml-1 px-1.5 py-0.5 bg-white/20 rounded-full text-[10px]">
               {resenas.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("desactivados")}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 ${activeTab === "desactivados"
+              ? "bg-rust text-white shadow-sm"
+              : "text-charcoal/70 hover:bg-bone hover:text-charcoal"
+              }`}
+          >
+            <span>🚫</span>
+            <span>Desactivados</span>
+            <span
+              className={`ml-1 px-1.5 py-0.5 rounded-full text-[10px] ${
+                servicios.filter((s) => s.activo === false).length +
+                  productos.filter((p) => p.activo === false).length >
+                0
+                  ? "bg-red-500 text-white font-extrabold"
+                  : "bg-white/20"
+              }`}
+            >
+              {servicios.filter((s) => s.activo === false).length +
+                productos.filter((p) => p.activo === false).length}
             </span>
           </button>
         </div>
@@ -759,12 +840,14 @@ export default function AdminDashboard({ user, onLogout, onGoHome }: AdminDashbo
                     </div>
 
                     <div className="pt-3 border-t border-charcoal/10 flex items-center justify-between">
-                      <span className="text-[11px] text-green-700 font-bold">✓ Activo en web</span>
+                      <span className={`text-[11px] font-bold ${s.activo === false ? "text-red-600" : "text-green-700"}`}>
+                        {s.activo === false ? "✗ Inactivo" : "✓ Activo en web"}
+                      </span>
                       <button
                         onClick={() => handleToggleServicioActivo(s)}
                         className="text-[11px] text-red-600 hover:underline font-semibold"
                       >
-                        Desactivar
+                        {s.activo === false ? "Activar" : "Desactivar"}
                       </button>
                     </div>
                   </div>
@@ -802,7 +885,6 @@ export default function AdminDashboard({ user, onLogout, onGoHome }: AdminDashbo
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 {productos.map((p) => {
                   const stock = p.stock ?? 0;
-                  const stockBajo = stock < 10;
                   return (
                     <div
                       key={p.id}
@@ -831,26 +913,109 @@ export default function AdminDashboard({ user, onLogout, onGoHome }: AdminDashbo
                             ${p.price.toLocaleString("es-CO")}
                           </span>
                           <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${stockBajo
-                              ? "bg-red-100 text-red-800 border border-red-300"
-                              : "bg-green-100 text-green-800"
-                              }`}
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              p.activo === false
+                                ? "bg-red-100 text-red-800"
+                                : stock === 0
+                                ? "bg-amber-100 text-amber-800"
+                                : "bg-green-100 text-green-800"
+                            }`}
                           >
-                            Stock: {stock}
+                            {p.activo === false ? "Inactivo" : `Stock: ${stock}`}
                           </span>
+                        </div>
+
+                        {/* CONTROL DIRECTO Y EDITABLE DE STOCK (POSTGRESQL) */}
+                        <div className="mt-3 pt-2.5 border-t border-charcoal/10 space-y-1.5 bg-bone/40 p-2.5 rounded-2xl">
+                          <div className="flex items-center justify-between text-[11px] font-bold text-charcoal/80">
+                            <span>Control de Stock:</span>
+                            <span className="font-mono text-rust text-xs">{stock} un.</span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateStock(p.id, Math.max(0, stock - 1))}
+                              disabled={actualizandoStockId === p.id || stock <= 0}
+                              className="w-7 h-7 rounded-lg bg-white hover:bg-bone border border-charcoal/20 font-extrabold text-charcoal text-sm flex items-center justify-center transition-colors disabled:opacity-30 disabled:cursor-not-allowed shadow-2xs"
+                              title="Restar 1 unidad"
+                            >
+                              -
+                            </button>
+
+                            <input
+                              type="number"
+                              min={0}
+                              defaultValue={stock}
+                              key={`stock-${p.id}-${stock}`}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  const val = parseInt((e.target as HTMLInputElement).value, 10);
+                                  if (!isNaN(val) && val >= 0 && val !== stock) {
+                                    handleUpdateStock(p.id, val);
+                                  }
+                                }
+                              }}
+                              onBlur={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                if (!isNaN(val) && val >= 0 && val !== stock) {
+                                  handleUpdateStock(p.id, val);
+                                }
+                              }}
+                              className="flex-1 w-12 text-center font-bold text-xs py-1 px-1 rounded-lg border border-charcoal/30 focus:border-rust focus:ring-1 focus:ring-rust outline-none bg-white shadow-2xs"
+                              title="Escribe la cantidad y presiona Enter o haz clic fuera para guardar en la base de datos"
+                            />
+
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateStock(p.id, stock + 1)}
+                              disabled={actualizandoStockId === p.id}
+                              className="w-7 h-7 rounded-lg bg-white hover:bg-bone border border-charcoal/20 font-extrabold text-charcoal text-sm flex items-center justify-center transition-colors disabled:opacity-30 shadow-2xs"
+                              title="Sumar 1 unidad"
+                            >
+                              +
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateStock(p.id, stock + 5)}
+                              disabled={actualizandoStockId === p.id}
+                              className="px-2 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[10px] font-extrabold border border-emerald-200 transition-colors shadow-2xs"
+                              title="Agregar 5 unidades"
+                            >
+                              +5
+                            </button>
+                          </div>
+
+                          {actualizandoStockId === p.id && (
+                            <p className="text-[10px] text-rust font-semibold animate-pulse text-center">
+                              Guardando en base de datos...
+                            </p>
+                          )}
                         </div>
                       </div>
 
                       <div className="pt-2 border-t border-charcoal/10 flex items-center justify-between text-[11px]">
-                        <span className="text-charcoal/50 uppercase text-[9px] font-bold">
-                          {p.category}
+                        <span className={`uppercase text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                          p.activo === false ? "bg-red-100 text-red-700" : "bg-bone text-charcoal/60"
+                        }`}>
+                          {p.activo === false ? "Desactivado" : p.category}
                         </span>
-                        <button
-                          onClick={() => handleToggleProductoActivo(p)}
-                          className="text-red-600 hover:underline font-semibold"
-                        >
-                          Desactivar
-                        </button>
+                        {p.activo === false ? (
+                          <button
+                            onClick={() => handleReactivarProducto(p)}
+                            className="text-emerald-700 hover:text-emerald-800 font-bold text-xs bg-emerald-50 hover:bg-emerald-100 px-2 py-1 rounded-lg border border-emerald-300 transition-colors"
+                          >
+                            ✓ Reactivar
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleToggleProductoActivo(p)}
+                            className="text-red-600 hover:underline font-semibold"
+                          >
+                            Desactivar
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -920,6 +1085,203 @@ export default function AdminDashboard({ user, onLogout, onGoHome }: AdminDashbo
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* PESTAÑA 6: PRODUCTOS Y SERVICIOS DESACTIVADOS           */}
+        {/* ======================================================== */}
+        {activeTab === "desactivados" && (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 className="font-display text-2xl font-bold flex items-center gap-2">
+                  <span>🚫</span>
+                  <span>Catálogo Desactivado (Inactivos)</span>
+                </h2>
+                <p className="text-xs text-charcoal/60">
+                  Visualiza y reactiva productos y servicios con un solo clic para que vuelvan a estar disponibles en la tienda y agenda web.
+                </p>
+              </div>
+
+              {/* FILTROS DE LA PESTAÑA */}
+              <div className="flex items-center gap-2 bg-white p-1 rounded-2xl border border-charcoal/10 shadow-xs text-xs">
+                <button
+                  type="button"
+                  onClick={() => setFiltroDesactivados("todos")}
+                  className={`px-3 py-1.5 rounded-xl font-bold transition-all ${
+                    filtroDesactivados === "todos"
+                      ? "bg-rust text-white"
+                      : "text-charcoal/70 hover:bg-bone"
+                  }`}
+                >
+                  Todos ({servicios.filter((s) => s.activo === false).length + productos.filter((p) => p.activo === false).length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFiltroDesactivados("productos")}
+                  className={`px-3 py-1.5 rounded-xl font-bold transition-all ${
+                    filtroDesactivados === "productos"
+                      ? "bg-rust text-white"
+                      : "text-charcoal/70 hover:bg-bone"
+                  }`}
+                >
+                  🛍️ Productos ({productos.filter((p) => p.activo === false).length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFiltroDesactivados("servicios")}
+                  className={`px-3 py-1.5 rounded-xl font-bold transition-all ${
+                    filtroDesactivados === "servicios"
+                      ? "bg-rust text-white"
+                      : "text-charcoal/70 hover:bg-bone"
+                  }`}
+                >
+                  ✂️ Servicios ({servicios.filter((s) => s.activo === false).length})
+                </button>
+              </div>
+            </div>
+
+            {/* SI NO HAY NADA DESACTIVADO */}
+            {servicios.filter((s) => s.activo === false).length === 0 &&
+            productos.filter((p) => p.activo === false).length === 0 ? (
+              <div className="bg-white rounded-3xl p-12 text-center border border-charcoal/10 shadow-soft">
+                <span className="text-5xl block mb-3">🎉</span>
+                <h3 className="font-bold text-base text-charcoal mb-1">¡Todo el catálogo está activo!</h3>
+                <p className="text-xs text-charcoal/60 max-w-md mx-auto">
+                  No hay productos ni servicios inactivos en este momento. Todos los servicios y productos están visibles y disponibles para los clientes.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-8">
+                {/* SECCIÓN PRODUCTOS DESACTIVADOS */}
+                {(filtroDesactivados === "todos" || filtroDesactivados === "productos") && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">🛍️</span>
+                      <h3 className="font-bold text-sm text-charcoal uppercase tracking-wider">
+                        Productos Inactivos ({productos.filter((p) => p.activo === false).length})
+                      </h3>
+                    </div>
+
+                    {productos.filter((p) => p.activo === false).length === 0 ? (
+                      <p className="text-xs text-charcoal/50 italic bg-white p-4 rounded-2xl border border-charcoal/10">
+                        No hay productos desactivados actualmente.
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        {productos
+                          .filter((p) => p.activo === false)
+                          .map((p) => (
+                            <div
+                              key={p.id}
+                              className="bg-white rounded-3xl p-4 border-2 border-red-200/80 shadow-soft flex flex-col justify-between gap-3 relative overflow-hidden"
+                            >
+                              <div className="absolute top-3 right-3 bg-red-100 text-red-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                Inactivo
+                              </div>
+
+                              <div>
+                                <div className="w-full h-28 rounded-2xl overflow-hidden bg-bone/50 mb-3 grayscale opacity-80">
+                                  <img
+                                    src={p.img}
+                                    alt={p.name}
+                                    className="w-full h-full object-cover"
+                                  />
+                                </div>
+                                <span className="text-[10px] font-bold uppercase text-charcoal/40 block mb-0.5">
+                                  {p.brand}
+                                </span>
+                                <h4 className="font-bold text-sm text-charcoal leading-tight mb-2">
+                                  {p.name}
+                                </h4>
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="text-rust font-bold">
+                                    ${p.price.toLocaleString("es-CO")}
+                                  </span>
+                                  <span className="text-charcoal/60 text-[11px]">
+                                    Stock: <strong>{p.stock ?? 0}</strong>
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* BOTÓN REACTIVAR EN 1 CLIC */}
+                              <button
+                                type="button"
+                                onClick={() => handleReactivarProducto(p)}
+                                className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all"
+                              >
+                                <span>✅</span>
+                                <span>Reactivar en Tienda</span>
+                              </button>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* SECCIÓN SERVICIOS DESACTIVADOS */}
+                {(filtroDesactivados === "todos" || filtroDesactivados === "servicios") && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">✂️</span>
+                      <h3 className="font-bold text-sm text-charcoal uppercase tracking-wider">
+                        Servicios Inactivos ({servicios.filter((s) => s.activo === false).length})
+                      </h3>
+                    </div>
+
+                    {servicios.filter((s) => s.activo === false).length === 0 ? (
+                      <p className="text-xs text-charcoal/50 italic bg-white p-4 rounded-2xl border border-charcoal/10">
+                        No hay servicios desactivados actualmente.
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {servicios
+                          .filter((s) => s.activo === false)
+                          .map((s) => (
+                            <div
+                              key={s.id}
+                              className="bg-white rounded-3xl p-5 border-2 border-red-200/80 shadow-soft flex flex-col justify-between gap-3 relative overflow-hidden"
+                            >
+                              <div className="absolute top-3 right-3 bg-red-100 text-red-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                Inactivo
+                              </div>
+
+                              <div>
+                                <div className="flex items-center gap-2 mb-2">
+                                  <span className="text-2xl">{s.icon || "✂️"}</span>
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-bone text-charcoal/70">
+                                    {s.category}
+                                  </span>
+                                </div>
+                                <h4 className="font-bold text-base text-charcoal mb-1">{s.name}</h4>
+                                <p className="text-xs text-charcoal/60 line-clamp-2 mb-2">{s.desc}</p>
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="text-charcoal/50">⏱️ {s.duration}</span>
+                                  <span className="font-bold text-rust text-base">
+                                    ${s.price.toLocaleString("es-CO")}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* BOTÓN REACTIVAR EN 1 CLIC */}
+                              <button
+                                type="button"
+                                onClick={() => handleReactivarServicio(s)}
+                                className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all"
+                              >
+                                <span>✅</span>
+                                <span>Reactivar Servicio</span>
+                              </button>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>

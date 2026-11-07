@@ -38,7 +38,7 @@ const FALLBACK_SERVICES: Service[] = [
   { id: 1, name: "Corte Clásico", desc: "Corte tradicional con tijera y máquina, finalizado con detalles de navaja.", duration: "45 min", price: 25000, icon: "✂️", category: "hombre", img: "https://images.unsplash.com/photo-1599351431202-1e0f0137899a?w=600&h=400&fit=crop&auto=format", rating: 5.0, especialistas_ids: [1, 3, 4] },
   { id: 2, name: "Arreglo de Barba", desc: "Perfilado, recorte y afeitado con navaja recta, toalla caliente incluida.", duration: "30 min", price: 20000, icon: "🪒", category: "hombre", img: "https://images.unsplash.com/photo-1621605815971-fbc98d665033?w=600&h=400&fit=crop&auto=format", rating: 4.8, especialistas_ids: [1, 3] },
   { id: 3, name: "Corte + Barba", desc: "El combo completo: corte a medida más tratamiento completo de barba.", duration: "75 min", price: 50000, icon: "💈", category: "hombre", img: "https://images.unsplash.com/photo-1503951914875-452162b0f3f1?w=600&h=400&fit=crop&auto=format", rating: 5.0, especialistas_ids: [1, 3] },
-  { id: 4, name: "Coloración", desc: "Tinte profesional para cabello o barba con productos de primera calidad.", duration: "90 min", price: 100000, icon: "🎨", category: "unisex", img: "https://images.unsplash.com/photo-1560066984-138daaa70c8f?w=600&h=400&fit=crop&auto=format", rating: 4.9, especialistas_ids: [2, 6] },
+  { id: 4, name: "Coloración", desc: "Tinte profesional para cabello o barba con productos de primera calidad.", duration: "90 min", price: 100000, icon: "🎨", category: "unisex", img: "https://images.unsplash.com/photo-1554519934-e32b1629d9ee?w=600&h=400&fit=crop&auto=format", rating: 4.9, especialistas_ids: [2, 6] },
   { id: 5, name: "Tratamiento Capilar", desc: "Hidratación profunda, masaje capilar y acondicionamiento con keratina.", duration: "60 min", price: 350000, icon: "🌿", category: "unisex", img: "https://images.unsplash.com/photo-1527799820374-dcf8d9d4a388?w=600&h=400&fit=crop&auto=format", rating: 5.0, especialistas_ids: [4, 6] },
   { id: 6, name: "Afeitado con Navaja", desc: "Experiencia completa de afeitado clásico con navaja, espuma caliente y toalla.", duration: "40 min", price: 30000, icon: "⚔️", category: "hombre", img: "https://images.unsplash.com/photo-1585747860715-2ba37e788b70?w=600&h=400&fit=crop&auto=format", rating: 4.8, especialistas_ids: [1, 3] },
   { id: 7, name: "Corte Femenino", desc: "Corte personalizado para mujer con técnica en capas, degradados y puntas.", duration: "60 min", price: 80000, icon: "✂️", category: "mujer", img: "https://images.unsplash.com/photo-1516975080664-ed2fc6a32937?w=600&h=400&fit=crop&auto=format", rating: 5.0, especialistas_ids: [3, 4, 6] },
@@ -388,6 +388,7 @@ export type { TarjetaPruebaSandbox };
 export async function crearPreferenciaMercadoPago(data: {
   turno_id?: number;
   orden_id?: number;
+  items?: any[];
   monto?: number;
   titulo?: string;
   es_abono?: boolean;
@@ -406,6 +407,84 @@ export async function confirmarPagoSimulado(referencia: string): Promise<void> {
     method: 'POST',
     body: JSON.stringify({ referencia_transaccion: referencia, estado: 'APROBADO' }),
   });
+}
+
+export async function fetchMercadoPagoConfig(): Promise<{ public_key: string; sandbox: boolean }> {
+  try {
+    const res = await request<{ ok: boolean; public_key: string; sandbox: boolean }>('/pagos/public-key');
+    return { public_key: res.public_key, sandbox: res.sandbox };
+  } catch {
+    return { public_key: 'APP_USR-3d097f55-923b-49b8-a521-2fd108973d89', sandbox: true };
+  }
+}
+
+export async function tokenizarTarjetaMercadoPago(cardData: {
+  cardNumber: string;
+  cardholderName: string;
+  securityCode: string;
+  expirationMonth: string | number;
+  expirationYear: string | number;
+  docType?: string;
+  docNumber?: string;
+}): Promise<any> {
+  const payload = {
+    card_number: cardData.cardNumber.replace(/\s+/g, ''),
+    expiration_month: Number(cardData.expirationMonth),
+    expiration_year: Number(cardData.expirationYear),
+    security_code: cardData.securityCode,
+    cardholder: {
+      name: cardData.cardholderName,
+      identification: {
+        type: cardData.docType || 'CC',
+        number: cardData.docNumber || '12345678',
+      },
+    },
+  };
+
+  let response: globalThis.Response;
+  try {
+    response = await fetch('/checkout/v1/api/bricks/card-form/tokenization', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    response = await fetch(`${API_BASE_URL}/pagos/tokenization`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  if (!response.ok) {
+    const fallbackRes = await fetch(`${API_BASE_URL}/pagos/tokenization`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!fallbackRes.ok) {
+      throw new Error(`Error en tokenización de tarjeta: HTTP ${response.status}`);
+    }
+    return await fallbackRes.json();
+  }
+
+  return await response.json();
+}
+
+export async function procesarPagoTarjeta(data: {
+  token: string;
+  orden_id?: number;
+  turno_id?: number;
+  monto?: number;
+  referencia?: string;
+  cuotas?: number;
+  payer?: { email?: string; name?: string };
+}): Promise<any> {
+  const res = await request<{ ok: boolean; data: any; mensaje: string }>('/pagos/procesar-pago', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  return res.data;
 }
 
 // ---------------------------------------------------------------------
@@ -546,5 +625,23 @@ export async function cambiarAprobacionResena(id: number, aprobada: boolean): Pr
     method: 'PATCH',
     body: JSON.stringify({ aprobada }),
   });
+  return res.data;
+}
+
+export async function actualizarStockProducto(id: number, stock: number): Promise<{ id: number; nombre: string; stock: number }> {
+  const res = await request<{ ok: boolean; data: any; mensaje: string }>(`/admin/productos/${id}/stock`, {
+    method: 'PATCH',
+    body: JSON.stringify({ stock }),
+  });
+  return res.data;
+}
+
+export async function fetchAdminServicios(): Promise<Service[]> {
+  const res = await request<{ ok: boolean; data: Service[] }>('/admin/servicios');
+  return res.data;
+}
+
+export async function fetchAdminProductos(): Promise<Product[]> {
+  const res = await request<{ ok: boolean; data: Product[] }>('/admin/productos');
   return res.data;
 }

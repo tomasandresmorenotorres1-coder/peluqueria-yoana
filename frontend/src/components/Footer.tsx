@@ -18,7 +18,7 @@ export default function Footer() {
             </div>
           </div>
           <p className="text-cream/70 text-sm leading-relaxed max-w-sm">
-            Desde 1987 ofreciendo servicios integrales de barbería, peluquería, colorimetría y estética para toda la familia con los más altos estándares de calidad y calidez.
+            Desde 2015 ofreciendo servicios integrales de barbería, peluquería, colorimetría y estética para toda la familia con los más altos estándares de calidad y calidez.
           </p>
         </div>
 
@@ -35,7 +35,7 @@ export default function Footer() {
               <strong className="text-white">9:00 – 19:00</strong>
             </li>
             <li className="flex justify-between text-cream/40">
-              <span>Domingos y Feriados:</span>
+              <span>Domingos y Festivos:</span>
               <span>Cerrado</span>
             </li>
           </ul>
@@ -47,15 +47,15 @@ export default function Footer() {
           <ul className="space-y-2.5 text-sm text-cream/75">
             <li className="flex items-center gap-2">
               <span>📍</span>
-              <span>Av. Corrientes 1234, CABA</span>
+              <span>Calle 50 # 76-16 - Medellín</span>
             </li>
             <li className="flex items-center gap-2">
               <span>📞</span>
-              <span>+54 11 4567-8901</span>
+              <span>3195608484</span>
             </li>
             <li className="flex items-center gap-2">
               <span>✉️</span>
-              <span>contacto@peluqueriayohana.com</span>
+              <span>yoanapeluqueria1@gmail.com</span>
             </li>
           </ul>
         </div>

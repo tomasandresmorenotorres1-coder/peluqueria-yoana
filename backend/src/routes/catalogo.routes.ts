@@ -22,11 +22,11 @@ const DEFAULT_SERVICE_IMAGES: Record<number, string> = {
 // 1. Obtener servicios con imagen y calificación dinámica calculada desde PostgreSQL
 router.get('/servicios', async (req: Request, res: Response) => {
     try {
-        const { categoria, genero } = req.query;
+        const { categoria, genero, incluir_inactivos } = req.query;
         let query = `
             SELECT s.id, c.nombre AS categoria_nombre, s.nombre, s.descripcion,
                    s.precio_actual, s.duracion_minutos, s.icono, s.texto_alternativo,
-                   s.genero,
+                   s.genero, s.activo,
                    COALESCE(ROUND(AVG(r.calificacion)::numeric, 1), 5.0) AS calificacion_promedio,
                    COUNT(r.id)::int AS total_resenas,
                    COALESCE(ARRAY_AGG(DISTINCT es.equipo_id) FILTER (WHERE es.equipo_id IS NOT NULL), '{}') AS especialistas_ids
@@ -34,9 +34,13 @@ router.get('/servicios', async (req: Request, res: Response) => {
             JOIN categorias c ON s.categoria_id = c.id
             LEFT JOIN resenas r ON r.servicio_id = s.id AND r.aprobada = TRUE
             LEFT JOIN especialistas_servicios es ON es.servicio_id = s.id
-            WHERE s.activo = TRUE
+            WHERE 1=1
         `;
         const params: any[] = [];
+
+        if (incluir_inactivos !== 'true') {
+            query += ` AND s.activo = TRUE`;
+        }
 
         if (genero) {
             params.push(genero);
@@ -61,6 +65,7 @@ router.get('/servicios', async (req: Request, res: Response) => {
             rating: Number(r.calificacion_promedio || 5.0),
             totalReviews: Number(r.total_resenas || 0),
             especialistas_ids: (r.especialistas_ids || []).map(Number),
+            activo: r.activo,
             // Campos nativos
             nombre: r.nombre,
             descripcion: r.descripcion,
@@ -110,16 +115,20 @@ router.patch('/servicios/:id/precio', autenticar, requireRol('ADMIN'), async (re
 // 3. Obtener productos de la tienda
 router.get('/productos', async (req: Request, res: Response) => {
     try {
-        const { genero, categoria } = req.query;
+        const { genero, categoria, incluir_inactivos } = req.query;
         let query = `
             SELECT p.id, c.nombre AS categoria_nombre, p.nombre, p.marca,
                    p.descripcion, p.precio_actual, p.stock, p.imagen_url,
-                   p.texto_alternativo, p.etiqueta, p.genero
+                   p.texto_alternativo, p.etiqueta, p.genero, p.activo
             FROM productos p
             JOIN categorias c ON p.categoria_id = c.id
-            WHERE p.activo = TRUE
+            WHERE 1=1
         `;
         const params: any[] = [];
+
+        if (incluir_inactivos !== 'true') {
+            query += ` AND p.activo = TRUE`;
+        }
 
         if (genero && genero !== 'todos') {
             params.push(genero);
@@ -138,10 +147,11 @@ router.get('/productos', async (req: Request, res: Response) => {
             brand: r.marca,
             desc: r.descripcion,
             price: Number(r.precio_actual),
-            stock: r.stock,
+            stock: Number(r.stock ?? 0),
             img: r.imagen_url,
             tag: r.etiqueta,
             category: r.genero,
+            activo: r.activo,
             // Campos nativos
             nombre: r.nombre,
             marca: r.marca,
@@ -158,6 +168,38 @@ router.get('/productos', async (req: Request, res: Response) => {
     } catch (error) {
         console.error('Error al obtener productos:', error);
         res.status(500).json({ ok: false, error: 'Error al obtener productos' });
+    }
+});
+
+// 4. Actualizar stock de un producto (accesible para administradores)
+router.patch('/productos/:id/stock', autenticar, requireRol('ADMIN'), async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const nuevoStock = Number(req.body.stock);
+
+        if (!Number.isInteger(nuevoStock) || nuevoStock < 0) {
+            return res.status(400).json({ ok: false, error: 'El stock debe ser un número entero mayor o igual a 0' });
+        }
+
+        const { rows } = await pool.query(
+            `UPDATE productos
+             SET stock = $1, actualizado_en = CURRENT_TIMESTAMP
+             WHERE id = $2 RETURNING id, nombre, stock, activo`,
+            [nuevoStock, id]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ ok: false, error: 'Producto no encontrado' });
+        }
+
+        res.json({
+            ok: true,
+            mensaje: `Stock de ${rows[0].nombre} actualizado a ${rows[0].stock} unidades en la base de datos`,
+            data: rows[0],
+        });
+    } catch (error) {
+        console.error('Error al actualizar stock de producto:', error);
+        res.status(500).json({ ok: false, error: 'Error al actualizar stock de producto' });
     }
 });
 
