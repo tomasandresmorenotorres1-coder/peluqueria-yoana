@@ -18,7 +18,10 @@ import type {
   User,
 } from '@/types';
 
-const rawApiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:4000/api').trim().replace(/\/+$/, '');
+const API_POR_DEFECTO = import.meta.env.PROD
+  ? 'https://peluqueria-yoana-production.up.railway.app/api'
+  : 'http://localhost:4000/api';
+const rawApiUrl = (import.meta.env.VITE_API_URL || API_POR_DEFECTO).trim().replace(/\/+$/, '');
 const API_BASE_URL = rawApiUrl.endsWith('/api') ? rawApiUrl : `${rawApiUrl}/api`;
 
 
